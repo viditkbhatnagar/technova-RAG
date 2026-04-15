@@ -6,8 +6,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
+from backend.routers import documents as documents_router
 from backend.routers import graph as graph_router
 from backend.routers import ingest as ingest_router
+from backend.routers import pipeline as pipeline_router
 from backend.routers import query as query_router
 from backend.routers import sessions as sessions_router
 from backend.routers import status as status_router
@@ -109,6 +111,8 @@ app.include_router(query_router.router)
 app.include_router(status_router.router)
 app.include_router(graph_router.router)
 app.include_router(sessions_router.router)
+app.include_router(documents_router.router)
+app.include_router(pipeline_router.router)
 
 
 @app.get("/")

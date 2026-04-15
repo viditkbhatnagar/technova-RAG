@@ -39,6 +39,7 @@ class HybridRetriever:
         rrf_k: int = 60,
         security_filter: dict | None = None,
         allowed_chunk_ids: set[str] | None = None,
+        return_intermediates: bool = False,
     ) -> dict:
         """Run the full hybrid retrieval pipeline.
 
@@ -46,30 +47,49 @@ class HybridRetriever:
           - chunks: final reranked top_k chunks
           - stats: dense_results, bm25_results, rrf_merged, reranked_final,
                    overlap_count, avg_rerank_score, retrieval_time_ms
+
+        If `return_intermediates=True`, the dict also carries per-stage data
+        and timings for the pipeline visualizer:
+          - intermediates.embed:   { vector_dim, elapsed_ms }
+          - intermediates.dense:   { candidates, elapsed_ms }
+          - intermediates.bm25:    { candidates, elapsed_ms }
+          - intermediates.rrf:     { candidates, elapsed_ms }
+          - intermediates.rerank:  { candidates, elapsed_ms }
         """
         t0 = time.perf_counter()
 
+        t_embed_0 = time.perf_counter()
         query_vec = self.embedder.embed_query(query)
+        embed_ms = int((time.perf_counter() - t_embed_0) * 1000)
+
+        t_dense_0 = time.perf_counter()
         dense_results = self.store.search(
             query_embedding=query_vec,
             top_k=top_k_retrieval,
             security_filter=security_filter,
         )
+        dense_ms = int((time.perf_counter() - t_dense_0) * 1000)
 
+        t_bm25_0 = time.perf_counter()
         bm25_results = self.bm25.search(
             query=query,
             top_k=top_k_retrieval,
             allowed_chunk_ids=allowed_chunk_ids,
         )
+        bm25_ms = int((time.perf_counter() - t_bm25_0) * 1000)
 
+        t_rrf_0 = time.perf_counter()
         fused = self._rrf_fusion(dense_results, bm25_results, k=rrf_k)
+        rrf_ms = int((time.perf_counter() - t_rrf_0) * 1000)
 
         dense_ids = {r["chunk_id"] for r in dense_results}
         bm25_ids = {r["chunk_id"] for r in bm25_results}
         overlap = len(dense_ids & bm25_ids)
 
         rerank_pool = fused[: max(top_k_retrieval, top_k)]
+        t_rerank_0 = time.perf_counter()
         reranked = self._rerank(query, rerank_pool, top_k=top_k) if rerank_pool else []
+        rerank_ms = int((time.perf_counter() - t_rerank_0) * 1000)
 
         avg_rerank = (
             sum(c.get("rerank_score", 0.0) for c in reranked) / len(reranked)
@@ -79,7 +99,7 @@ class HybridRetriever:
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-        return {
+        result: dict = {
             "chunks": reranked,
             "stats": {
                 "dense_results": len(dense_results),
@@ -91,6 +111,17 @@ class HybridRetriever:
                 "retrieval_time_ms": elapsed_ms,
             },
         }
+
+        if return_intermediates:
+            result["intermediates"] = {
+                "embed": {"vector_dim": len(query_vec), "elapsed_ms": embed_ms},
+                "dense": {"candidates": dense_results, "elapsed_ms": dense_ms},
+                "bm25": {"candidates": bm25_results, "elapsed_ms": bm25_ms},
+                "rrf": {"candidates": fused, "elapsed_ms": rrf_ms},
+                "rerank": {"candidates": reranked, "elapsed_ms": rerank_ms},
+            }
+
+        return result
 
     # ---------- fusion ----------
 

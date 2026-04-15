@@ -46,6 +46,20 @@ export default function LandingPage() {
             href="/knowledge-graph"
             accent="#06b6d4"
           />
+          <LandingCard
+            icon="📚"
+            title="Document Explorer"
+            description="Browse every PDF in the corpus, drill into chunks, and inspect what's mirrored to Postgres for the Neon portal."
+            href="/documents"
+            accent="#10b981"
+          />
+          <LandingCard
+            icon="⚙️"
+            title="Pipeline Visualizer"
+            description="Watch a query flow through Embed → Dense + BM25 → RRF → Rerank → LLM in 3D. Static diagram + live trace."
+            href="/pipeline"
+            accent="#ec4899"
+          />
         </div>
 
         <footer className="mt-14 text-center text-xs text-white/30 sm:mt-20">

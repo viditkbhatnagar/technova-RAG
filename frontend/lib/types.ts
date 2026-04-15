@@ -1,6 +1,34 @@
-import type { ChunkResult, Role } from "./api";
+import type {
+  ChunkPage,
+  ChunkRecord,
+  ChunkResult,
+  DocumentDetail,
+  DocumentSummary,
+  PipelineArchitecture,
+  PipelineCandidate,
+  PipelineEdge,
+  PipelineStage,
+  PipelineTrace,
+  PipelineTraceRequest,
+  Role,
+  SyncResult,
+} from "./api";
 
-export type { ChunkResult, Role };
+export type {
+  ChunkPage,
+  ChunkRecord,
+  ChunkResult,
+  DocumentDetail,
+  DocumentSummary,
+  PipelineArchitecture,
+  PipelineCandidate,
+  PipelineEdge,
+  PipelineStage,
+  PipelineTrace,
+  PipelineTraceRequest,
+  Role,
+  SyncResult,
+};
 
 export interface ChatMessage {
   id: string;

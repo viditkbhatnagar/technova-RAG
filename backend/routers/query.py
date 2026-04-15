@@ -101,6 +101,16 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
             access_denied=True,
             access_denied_message=access_denied_message,
         )
+        chat_store.schedule_query_run(
+            query=req.query,
+            mode=req.mode,
+            role=req.role,
+            top_k=req.top_k,
+            stats=stats,
+            top_chunks=[],
+            llm_used=False,
+            access_denied=True,
+        )
         return QueryResponse(
             answer=answer,
             sources=[],
@@ -126,6 +136,19 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
         retrieval_stats=stats,
         access_denied=False,
         access_denied_message=None,
+    )
+    chat_store.schedule_query_run(
+        query=req.query,
+        mode=req.mode,
+        role=req.role,
+        top_k=req.top_k,
+        stats=stats,
+        top_chunks=[
+            {"chunk_id": s.chunk_id, "score": s.score, "doc_name": s.doc_name}
+            for s in source_results
+        ],
+        llm_used=bool(cfg.openai_api_key) and bool(chunks),
+        access_denied=False,
     )
 
     return QueryResponse(

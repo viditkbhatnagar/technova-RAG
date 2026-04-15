@@ -109,6 +109,89 @@ class StatusResponse(BaseModel):
     message: str | None = None
 
 
+# ---------- /api/documents ----------
+
+class DocumentSummary(BaseModel):
+    doc_slug: str
+    doc_name: str
+    file_name: str
+    domain: str
+    security_level: int
+    security_label: str
+    page_count: int
+    chunk_count: int
+    char_count: int
+    ingested_at: datetime
+
+
+class ChunkRecord(BaseModel):
+    chunk_id: str
+    doc_slug: str
+    text: str
+    page_number: int
+    chunk_index: int
+    char_count: int
+    content_hash: str
+    security_level: int
+    security_label: str
+    domain: str
+    created_at: datetime | None = None
+
+
+class ChunkPage(BaseModel):
+    items: list[ChunkRecord]
+    total: int
+    limit: int
+    offset: int
+
+
+class DocumentDetail(DocumentSummary):
+    sample_chunks: list[ChunkRecord] = Field(default_factory=list)
+
+
+class SyncResponse(BaseModel):
+    status: str
+    documents_written: int
+    chunks_written: int
+    message: str | None = None
+
+
+# ---------- /api/pipeline ----------
+
+class PipelineStageInfo(BaseModel):
+    id: str
+    label: str
+    description: str
+    role: str
+    model: str | None = None
+    color: str
+    runs_locally: bool = True
+
+
+class PipelineArchitectureResponse(BaseModel):
+    stages: list[PipelineStageInfo]
+    edges: list[dict[str, str]]
+
+
+class PipelineTraceRequest(BaseModel):
+    query: str
+    mode: Literal["open", "secure"] = "open"
+    role: Literal["employee", "manager", "admin"] | None = None
+    top_k: int = 5
+    run_llm: bool = True
+
+
+class PipelineTraceResponse(BaseModel):
+    query: str
+    mode: str
+    role: str | None = None
+    stages: dict[str, Any]
+    stats: dict[str, Any]
+    total_elapsed_ms: int
+    access_denied: bool = False
+    access_denied_message: str | None = None
+
+
 # ---------- Internal ----------
 
 class RetrievalResult(BaseModel):

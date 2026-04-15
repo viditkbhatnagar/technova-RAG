@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from backend.config import DOCUMENT_METADATA, settings
 from backend.models import IngestDocDetail, IngestRequest, IngestResponse
 from backend.services.chunker import chunk_document
+from backend.services.db import chat_store
 from backend.services.graph_builder import GraphBuilder
 from backend.services.loader import IngestionError, list_pdfs, load_pdf
 
@@ -14,7 +15,7 @@ router = APIRouter()
 
 
 @router.post("/api/ingest", response_model=IngestResponse)
-def ingest(req: IngestRequest, request: Request) -> IngestResponse:
+async def ingest(req: IngestRequest, request: Request) -> IngestResponse:
     embedder = request.app.state.embedder
     store = request.app.state.store
     bm25 = request.app.state.bm25
@@ -42,6 +43,7 @@ def ingest(req: IngestRequest, request: Request) -> IngestResponse:
     all_chunks: list[dict] = []
     details: list[IngestDocDetail] = []
     skipped: list[str] = []
+    doc_rows: list[dict] = []
 
     for pdf_path in pdf_files:
         file_name = pdf_path.name
@@ -82,6 +84,18 @@ def ingest(req: IngestRequest, request: Request) -> IngestResponse:
                 security_level=DOCUMENT_METADATA[file_name]["security_label"],
             )
         )
+        meta = DOCUMENT_METADATA[file_name]
+        doc_rows.append({
+            "doc_slug": meta["doc_slug"],
+            "doc_name": meta["doc_name"],
+            "file_name": file_name,
+            "domain": meta["domain"],
+            "security_level": meta["security_level"],
+            "security_label": meta["security_label"],
+            "page_count": len(pages),
+            "chunk_count": len(chunks),
+            "char_count": sum(c.get("char_count", 0) for c in chunks),
+        })
         print(
             f"[ingest] {file_name}: {len(pages)} pages → {len(chunks)} chunks"
         )
@@ -97,6 +111,14 @@ def ingest(req: IngestRequest, request: Request) -> IngestResponse:
         bm25.save(settings.bm25_index_file)
     except Exception as exc:
         print(f"[ingest] warning: failed to persist BM25 index: {exc}")
+
+    if chat_store.enabled:
+        print(f"[ingest] mirroring {len(doc_rows)} docs / {len(all_chunks)} chunks → Postgres")
+        await chat_store.upsert_documents(doc_rows)
+        await chat_store.upsert_chunks(
+            all_chunks,
+            replace_doc_slugs=[d["doc_slug"] for d in doc_rows],
+        )
 
     try:
         print("[ingest] building knowledge graph...")

@@ -159,3 +159,170 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: "DELETE" });
   return res.ok;
 }
+
+// ---------- documents ----------
+
+export interface DocumentSummary {
+  doc_slug: string;
+  doc_name: string;
+  file_name: string;
+  domain: string;
+  security_level: number;
+  security_label: string;
+  page_count: number;
+  chunk_count: number;
+  char_count: number;
+  ingested_at: string;
+}
+
+export interface ChunkRecord {
+  chunk_id: string;
+  doc_slug: string;
+  text: string;
+  page_number: number;
+  chunk_index: number;
+  char_count: number;
+  content_hash: string;
+  security_level: number;
+  security_label: string;
+  domain: string;
+  created_at: string | null;
+}
+
+export interface DocumentDetail extends DocumentSummary {
+  sample_chunks: ChunkRecord[];
+}
+
+export interface ChunkPage {
+  items: ChunkRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SyncResult {
+  status: string;
+  documents_written: number;
+  chunks_written: number;
+  message: string | null;
+}
+
+async function jsonOrThrow<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: `API error: ${res.status}` }));
+    throw new Error(err.detail || `API error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchDocuments(): Promise<DocumentSummary[]> {
+  const res = await fetch(`${API_URL}/api/documents`, { cache: "no-store" });
+  return jsonOrThrow<DocumentSummary[]>(res);
+}
+
+export async function fetchDocument(slug: string): Promise<DocumentDetail> {
+  const res = await fetch(`${API_URL}/api/documents/${slug}`, { cache: "no-store" });
+  return jsonOrThrow<DocumentDetail>(res);
+}
+
+export async function fetchDocumentChunks(
+  slug: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<ChunkPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 50));
+  params.set("offset", String(opts.offset ?? 0));
+  const res = await fetch(
+    `${API_URL}/api/documents/${slug}/chunks?${params.toString()}`,
+    { cache: "no-store" },
+  );
+  return jsonOrThrow<ChunkPage>(res);
+}
+
+export async function syncDocumentsToDb(): Promise<SyncResult> {
+  const res = await fetch(`${API_URL}/api/documents/sync`, { method: "POST" });
+  return jsonOrThrow<SyncResult>(res);
+}
+
+// ---------- pipeline ----------
+
+export interface PipelineStage {
+  id: string;
+  label: string;
+  description: string;
+  role: string;
+  model: string | null;
+  color: string;
+  runs_locally: boolean;
+}
+
+export interface PipelineEdge {
+  source: string;
+  target: string;
+}
+
+export interface PipelineArchitecture {
+  stages: PipelineStage[];
+  edges: PipelineEdge[];
+}
+
+export interface PipelineCandidate {
+  chunk_id: string;
+  doc_name: string;
+  doc_slug: string;
+  page_number: number;
+  security_level: number;
+  security_label: string;
+  score: number;
+  text_preview: string;
+  retrieval_method?: string | null;
+}
+
+export interface PipelineTraceRequest {
+  query: string;
+  mode?: Mode;
+  role?: Role;
+  top_k?: number;
+  run_llm?: boolean;
+}
+
+export interface PipelineTrace {
+  query: string;
+  mode: string;
+  role: string | null;
+  stages: {
+    query: { text: string };
+    embed: { model: string; device: string; vector_dim: number; elapsed_ms: number };
+    dense: { model: string; candidates: PipelineCandidate[]; elapsed_ms: number; security_filtered: boolean };
+    bm25: { model: string; candidates: PipelineCandidate[]; elapsed_ms: number; security_filtered: boolean };
+    rrf: { k: number; candidates: PipelineCandidate[]; elapsed_ms: number; overlap_count: number };
+    rerank: { model: string; device: string; candidates: PipelineCandidate[]; elapsed_ms: number };
+    final: { top_k: PipelineCandidate[]; count: number };
+    llm: { used: boolean; model: string | null; answer: string; prompt_chars: number; elapsed_ms: number };
+    security?: {
+      role: string;
+      clearance: number;
+      restricted_probe: { count: number; top_cosine: number };
+    };
+  };
+  stats: RetrievalStats;
+  total_elapsed_ms: number;
+  access_denied: boolean;
+  access_denied_message: string | null;
+}
+
+export async function fetchPipelineArchitecture(): Promise<PipelineArchitecture> {
+  const res = await fetch(`${API_URL}/api/pipeline/architecture`, { cache: "no-store" });
+  return jsonOrThrow<PipelineArchitecture>(res);
+}
+
+export async function tracePipeline(payload: PipelineTraceRequest): Promise<PipelineTrace> {
+  const res = await fetch(`${API_URL}/api/pipeline/trace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return jsonOrThrow<PipelineTrace>(res);
+}
