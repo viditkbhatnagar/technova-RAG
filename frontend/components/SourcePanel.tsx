@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, FileText, Clock, BarChart3 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { ChunkResult, RetrievalStats } from "@/lib/api";
 import { SECURITY_COLORS } from "@/lib/types";
@@ -30,8 +29,8 @@ function methodLabel(method: string): string {
 
 export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
   return (
-    <div className="flex h-full flex-col border-l border-white/10 bg-black/30">
-      <div className="border-b border-white/10 px-5 py-4">
+    <div className="flex h-full min-h-0 flex-col border-l border-white/10 bg-black/30">
+      <div className="shrink-0 border-b border-white/10 px-5 py-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-white/70">
           Retrieved Sources
         </h2>
@@ -59,7 +58,7 @@ export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
           </div>
         ) : null}
       </div>
-      <ScrollArea className="flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="space-y-3 p-5">
           {sources.length === 0 ? (
             <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center text-sm text-white/40">
@@ -70,7 +69,7 @@ export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
             sources.map((src, idx) => <SourceCard key={src.chunk_id} source={src} index={idx} />)
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
