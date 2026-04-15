@@ -44,10 +44,19 @@ function edgeColor(type: string): string {
   return "rgba(167,139,250,0.45)";
 }
 
+interface SelectedEdge {
+  source: GraphNode;
+  target: GraphNode;
+  type: string;
+  label: string;
+  weight?: number;
+}
+
 export function GraphViewer() {
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null);
   const [dims, setDims] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -122,12 +131,52 @@ export function GraphViewer() {
           linkColor={((l: unknown) => (l as ForceLink).color || "rgba(255,255,255,0.1)") as never}
           linkOpacity={0.6}
           linkWidth={((l: unknown) => ((l as ForceLink).type === "relationship" ? 1.2 : 0.4)) as never}
-          linkDirectionalParticles={0}
+          linkDirectionalParticles={((l: unknown) => {
+            const type = (l as ForceLink).type;
+            return type === "contains" || type === "mentions" ? 0 : 2;
+          }) as never}
+          linkDirectionalParticleWidth={1.5}
+          linkDirectionalArrowLength={((l: unknown) => {
+            const type = (l as ForceLink).type;
+            return type === "contains" || type === "mentions" ? 0 : 3;
+          }) as never}
+          linkDirectionalArrowRelPos={0.9}
+          linkLabel={((l: unknown) => {
+            const e = l as ForceLink & { source: unknown; target: unknown };
+            const s = typeof e.source === "object" && e.source ? (e.source as GraphNode).label : String(e.source);
+            const t = typeof e.target === "object" && e.target ? (e.target as GraphNode).label : String(e.target);
+            const w = (e as { weight?: number }).weight;
+            return `${s} → ${e.label}${w ? ` (×${w})` : ""} → ${t}`;
+          }) as never}
           enableNodeDrag={false}
-          onNodeClick={((n: unknown) => setSelected(n as ForceNode)) as never}
+          onNodeClick={((n: unknown) => {
+            setSelected(n as ForceNode);
+            setSelectedEdge(null);
+          }) as never}
+          onLinkClick={((l: unknown) => {
+            const e = l as ForceLink & { source: unknown; target: unknown; weight?: number };
+            const source = typeof e.source === "object" ? (e.source as GraphNode) : undefined;
+            const target = typeof e.target === "object" ? (e.target as GraphNode) : undefined;
+            if (!source || !target) return;
+            setSelectedEdge({
+              source,
+              target,
+              type: e.type,
+              label: e.label,
+              weight: e.weight,
+            });
+            setSelected(null);
+          }) as never}
+          onBackgroundClick={(() => {
+            setSelected(null);
+            setSelectedEdge(null);
+          }) as never}
         />
       ) : null}
       {selected ? <InfoPanel node={selected} onClose={() => setSelected(null)} /> : null}
+      {selectedEdge ? (
+        <EdgePanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
+      ) : null}
       {data ? <StatsBar data={data} /> : null}
       {data ? <Legend /> : null}
     </div>
@@ -195,6 +244,72 @@ function InfoPanel({ node, onClose }: { node: GraphNode; onClose: () => void }) 
         ) : null}
       </div>
     </div>
+  );
+}
+
+function EdgePanel({ edge, onClose }: { edge: SelectedEdge; onClose: () => void }) {
+  const prettyType = edge.type.replace(/_/g, " ");
+  return (
+    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-white/15 bg-black/80 text-white shadow-2xl backdrop-blur-md">
+      <div className="flex items-start justify-between gap-2 border-b border-white/10 p-4">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Relationship</div>
+          <div className="mt-0.5 truncate text-base font-semibold">{prettyType}</div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="space-y-3 p-4 text-sm">
+        <Row label="Source">
+          <EndpointChip node={edge.source} />
+        </Row>
+        <Row label="Predicate">
+          <span className="font-mono text-xs text-violet-300">{edge.label}</span>
+        </Row>
+        <Row label="Target">
+          <EndpointChip node={edge.target} />
+        </Row>
+        {typeof edge.weight === "number" ? (
+          <Row label="Weight">
+            <span className="font-mono text-xs text-white/70">×{edge.weight}</span>
+          </Row>
+        ) : null}
+        <Separator className="bg-white/10" />
+        <p className="text-xs leading-relaxed text-white/60">
+          {edge.type === "contains"
+            ? "Document node contains this chunk."
+            : edge.type === "mentions"
+            ? "This chunk mentions the entity."
+            : edge.type === "co_occurs_with"
+            ? `Both entities appear in the same chunk${
+                edge.weight ? ` across ${edge.weight} chunk(s)` : ""
+              }.`
+            : "Entity-to-entity relationship extracted from the corpus."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function EndpointChip({ node }: { node: GraphNode }) {
+  const color =
+    node.type === "document"
+      ? SECURITY_COLORS[
+          typeof node.security_level === "number" ? node.security_level : 1
+        ]?.hex
+      : node.type === "chunk"
+      ? "#94a3b8"
+      : ENTITY_COLORS[(node.entity_type || "DEFAULT").toUpperCase()] ?? ENTITY_COLORS.DEFAULT;
+  return (
+    <span className="inline-flex max-w-[12rem] items-center gap-1.5">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="truncate text-xs text-white/80">{node.label}</span>
+    </span>
   );
 }
 
