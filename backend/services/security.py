@@ -29,30 +29,6 @@ def get_allowed_chunk_ids(store: QdrantStore, role: str) -> set[str]:
     return {p["chunk_id"] for p in points if "chunk_id" in p}
 
 
-def check_restricted_docs_exist(
-    store: QdrantStore,
-    query_embedding: list[float],
-    role: str,
-    probe_top_k: int = 10,
-    relevance_threshold: float = 0.35,
-) -> tuple[bool, int]:
-    """Peek above the user's clearance to see if restricted docs would have matched.
-
-    Used ONLY to inform the access-denied message — never to leak content.
-    Returns (exists, distinct_doc_count).
-    """
-    user_level = ROLE_CLEARANCE[role]
-    above_filter = {"security_level": {"$gt": user_level}}
-    hits = store.search(
-        query_embedding=query_embedding,
-        top_k=probe_top_k,
-        security_filter=above_filter,
-    )
-    relevant = [h for h in hits if h.get("score", 0.0) >= relevance_threshold]
-    distinct_docs = {h.get("doc_slug") for h in relevant if h.get("doc_slug")}
-    return (len(relevant) > 0, len(distinct_docs))
-
-
 def _expand_query(query: str) -> str:
     q_lower = query.lower()
     extras: list[str] = []
@@ -72,15 +48,17 @@ def self_correcting_retrieve(
     top_k: int = 5,
     top_k_retrieval: int = 10,
     rrf_k: int = 60,
-    min_relevance: float = 0.3,
+    weak_top1_threshold: float = 0.0,
+    restricted_cosine_threshold: float = 0.55,
 ) -> dict:
     """Secure retrieval with a self-correcting loop.
 
     - Always applies security pre-filter by role clearance.
-    - If average rerank score < min_relevance, expand query + widen top_k and retry.
+    - If the top-1 accessible chunk has a weak cross-encoder score, try an
+      expanded query with a wider retrieval window.
     - Never relaxes the security clearance.
-    - Checks whether restricted docs above the user's clearance would match;
-      if retrieval was weak and restricted matches exist, flag access_denied.
+    - Deny access only when accessible retrieval is clearly weak AND the
+      restricted space has a strong semantic match the user can't reach.
     """
     security_filter = get_security_filter(role)
     allowed_ids = get_allowed_chunk_ids(store, role)
@@ -96,18 +74,31 @@ def self_correcting_retrieve(
     stats = result["stats"]
     stats["self_correction_applied"] = False
 
-    avg_score = stats.get("avg_rerank_score", 0.0)
+    def _top1(r: dict) -> float:
+        chunks = r.get("chunks") or []
+        if not chunks:
+            return float("-inf")
+        return float(chunks[0].get("rerank_score", 0.0))
 
     # Probe restricted space (informational only, never returned as content)
     query_vec = retriever.embedder.embed_query(query)
-    restricted_exists, restricted_count = check_restricted_docs_exist(
-        store=store, query_embedding=query_vec, role=role
+    restricted_hits = store.search(
+        query_embedding=query_vec,
+        top_k=10,
+        security_filter={"security_level": {"$gt": ROLE_CLEARANCE[role]}},
     )
+    strong_restricted = [
+        h for h in restricted_hits if h.get("score", 0.0) >= restricted_cosine_threshold
+    ]
+    restricted_exists = len(strong_restricted) > 0
+    restricted_count = len({h.get("doc_slug") for h in strong_restricted if h.get("doc_slug")})
+    top_restricted_cosine = max((h.get("score", 0.0) for h in restricted_hits), default=0.0)
     stats["restricted_docs_exist"] = restricted_exists
     stats["restricted_doc_count"] = restricted_count
+    stats["top_restricted_cosine"] = round(float(top_restricted_cosine), 4)
 
-    # Weak retrieval → try expanded query with wider top_k
-    if avg_score < min_relevance:
+    # Weak accessible retrieval → try expanded query with wider top_k
+    if _top1(result) < weak_top1_threshold:
         expanded = _expand_query(query)
         if expanded != query:
             wider = retriever.retrieve(
@@ -118,23 +109,30 @@ def self_correcting_retrieve(
                 security_filter=security_filter,
                 allowed_chunk_ids=allowed_ids,
             )
-            stats["self_correction_applied"] = True
-            stats["expanded_query"] = expanded
-            if wider["stats"].get("avg_rerank_score", 0.0) > avg_score:
+            if _top1(wider) > _top1(result):
                 result = wider
                 stats = result["stats"]
                 stats["self_correction_applied"] = True
                 stats["expanded_query"] = expanded
                 stats["restricted_docs_exist"] = restricted_exists
                 stats["restricted_doc_count"] = restricted_count
+                stats["top_restricted_cosine"] = round(float(top_restricted_cosine), 4)
+            else:
+                stats["self_correction_applied"] = True
+                stats["expanded_query"] = expanded
 
-    # Access-denied heuristic: no accessible chunks, OR weak retrieval while
-    # restricted docs clearly match the query.
+    # Access-denied heuristic: only when accessible retrieval is clearly weak
+    # AND restricted space has a strong match the user can't reach.
+    # - top-1 rerank < 0 means the cross-encoder considers even the best
+    #   accessible chunk to be off-topic for this query.
+    # - top restricted cosine >= restricted_cosine_threshold means the
+    #   restricted corpus has a genuinely relevant doc.
     access_denied = False
     access_denied_message = None
+    top1_accessible = _top1(result)
     if not result["chunks"] and restricted_exists:
         access_denied = True
-    elif restricted_exists and stats.get("avg_rerank_score", 0.0) < min_relevance:
+    elif restricted_exists and top1_accessible < weak_top1_threshold:
         access_denied = True
 
     if access_denied:

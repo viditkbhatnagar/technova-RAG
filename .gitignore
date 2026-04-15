@@ -37,5 +37,11 @@ build/
 
 # Project data
 qdrant_storage/
+qdrant_data/
 bm25_index.pkl
 *.pkl
+*.pickle
+
+# Next.js build
+.turbo/
+tsconfig.tsbuildinfo

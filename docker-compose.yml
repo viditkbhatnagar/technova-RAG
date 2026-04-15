@@ -9,5 +9,25 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: technova_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+      - RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+    depends_on:
+      - qdrant
+    volumes:
+      - ./docs:/app/docs:ro
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
