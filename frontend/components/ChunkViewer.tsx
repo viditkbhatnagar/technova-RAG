@@ -22,24 +22,24 @@ export function ChunkViewer({ chunk }: ChunkViewerProps) {
       : chunk.text;
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 transition-colors hover:border-white/20">
+    <div className="rounded-lg border border-base bg-surface-1 p-4 shadow-card transition-colors hover:border-strong">
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge
           variant="secondary"
-          className="bg-white/10 font-mono text-[10px] text-white/60"
+          className="bg-surface-2 font-mono text-[10px] text-muted-fg"
         >
           #{chunk.chunk_index}
         </Badge>
         <Badge
           variant="outline"
-          className="border-white/20 font-mono text-[10px] text-white/60"
+          className="border-base font-mono text-[10px] text-muted-fg"
         >
           <FileText className="mr-1 h-3 w-3" />
           p.{chunk.page_number}
         </Badge>
         <Badge
           variant="outline"
-          className="border-white/20 font-mono text-[10px] text-white/60"
+          className="border-base font-mono text-[10px] text-muted-fg"
         >
           <Hash className="mr-1 h-3 w-3" />
           {chunk.char_count} chars
@@ -49,19 +49,19 @@ export function ChunkViewer({ chunk }: ChunkViewerProps) {
         >
           {sec.label}
         </Badge>
-        <span className="ml-auto truncate font-mono text-[10px] text-white/30">
+        <span className="ml-auto truncate font-mono text-[10px] text-ghost">
           {chunk.chunk_id}
         </span>
       </div>
-      <Separator className="my-3 bg-white/10" />
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/80">
+      <Separator className="my-3 bg-base" />
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-base-fg">
         {expanded ? chunk.text : truncated}
       </p>
       {chunk.text.length > PREVIEW_CHARS ? (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-3 inline-flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white/90"
+          className="mt-3 inline-flex items-center gap-1 text-xs text-faint transition-colors hover:text-strong"
         >
           {expanded ? (
             <>
@@ -74,7 +74,7 @@ export function ChunkViewer({ chunk }: ChunkViewerProps) {
           )}
         </button>
       ) : null}
-      <p className="mt-3 truncate font-mono text-[10px] text-white/25">
+      <p className="mt-3 truncate font-mono text-[10px] text-ghost">
         sha256: {chunk.content_hash}
       </p>
     </div>

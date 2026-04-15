@@ -302,9 +302,11 @@ export interface PipelineTrace {
     final: { top_k: PipelineCandidate[]; count: number };
     llm: { used: boolean; model: string | null; answer: string; prompt_chars: number; elapsed_ms: number };
     security?: {
-      role: string;
-      clearance: number;
-      restricted_probe: { count: number; top_cosine: number };
+      active: boolean;
+      role: string | null;
+      clearance: number | null;
+      allowed_chunk_count: number | null;
+      restricted_probe: { count: number; top_cosine: number } | null;
     };
   };
   stats: RetrievalStats;

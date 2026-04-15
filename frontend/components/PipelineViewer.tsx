@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Loader2 } from "lucide-react";
 import { SECURITY_COLORS } from "@/lib/types";
+import { useTheme } from "@/lib/theme";
 import type {
   PipelineArchitecture,
   PipelineCandidate,
@@ -22,14 +23,15 @@ interface PipelineViewerProps {
 }
 
 const STAGE_POSITIONS: Record<string, { x: number; y: number; z: number }> = {
-  query:  { x: -360, y:    0, z: 0 },
-  embed:  { x: -180, y:    0, z: 0 },
-  dense:  { x:    0, y:  100, z: 0 },
-  bm25:   { x:    0, y: -100, z: 0 },
-  rrf:    { x:  180, y:    0, z: 0 },
-  rerank: { x:  340, y:    0, z: 0 },
-  final:  { x:  500, y:    0, z: 0 },
-  llm:    { x:  680, y:    0, z: 0 },
+  query:    { x: -360, y:    0, z:    0 },
+  embed:    { x: -180, y:   60, z:    0 },
+  security: { x: -180, y:  -60, z:  120 },
+  dense:    { x:    0, y:  100, z:    0 },
+  bm25:     { x:    0, y: -100, z:    0 },
+  rrf:      { x:  180, y:    0, z:    0 },
+  rerank:   { x:  340, y:    0, z:    0 },
+  final:    { x:  500, y:    0, z:    0 },
+  llm:      { x:  680, y:    0, z:    0 },
 };
 
 const SATELLITE_STAGES = ["dense", "bm25", "rrf", "rerank", "final"] as const;
@@ -70,16 +72,29 @@ function candidatesForStage(trace: PipelineTrace | null, stageId: SatelliteStage
 function buildGraphData(
   arch: PipelineArchitecture,
   trace: PipelineTrace | null,
+  palette: { stageEdge: string; dimEdge: string },
 ): { nodes: ViewNode[]; links: ViewLink[] } {
+  const secureActive = trace?.mode === "secure" && trace?.stages.security?.active === true;
+  const accessDenied = trace?.access_denied === true;
+
   const nodes: ViewNode[] = arch.stages.map((s) => {
     const pos = STAGE_POSITIONS[s.id] ?? { x: 0, y: 0, z: 0 };
+    let color = s.color;
+    let size = 22;
+    if (s.id === "security") {
+      color = secureActive ? (accessDenied ? "#ef4444" : s.color) : "rgba(244,63,94,0.25)";
+      size = secureActive ? 26 : 16;
+    }
+    if (s.id === "llm" && trace && !trace.stages.llm.used) {
+      color = "rgba(139,92,246,0.35)";
+    }
     return {
       id: s.id,
       label: s.label,
       kind: "stage",
       stageId: s.id,
-      color: s.color,
-      size: 22,
+      color,
+      size,
       fx: pos.x,
       fy: pos.y,
       fz: pos.z,
@@ -87,14 +102,36 @@ function buildGraphData(
     };
   });
 
-  const links: ViewLink[] = arch.edges.map((e) => ({
-    source: e.source,
-    target: e.target,
-    kind: "stage",
-    color: "rgba(255,255,255,0.18)",
-    width: 1.6,
-    particles: 0,
-  }));
+  const links: ViewLink[] = arch.edges.map((e) => {
+    const isSecurityEdge =
+      e.source === "security" || e.target === "security";
+    let color = palette.stageEdge;
+    let width = 1.6;
+    if (isSecurityEdge) {
+      color = secureActive
+        ? accessDenied
+          ? "rgba(239,68,68,0.55)"
+          : "rgba(244,63,94,0.55)"
+        : "rgba(244,63,94,0.12)";
+      width = secureActive ? 1.8 : 0.6;
+    }
+    if ((e.source === "query" || e.source === "embed") && (e.target === "dense" || e.target === "bm25")) {
+      // direct query→bm25 / embed→dense edges dim when security is active to
+      // emphasise the gated path
+      if (secureActive) {
+        color = palette.dimEdge;
+        width = 0.8;
+      }
+    }
+    return {
+      source: e.source,
+      target: e.target,
+      kind: "stage",
+      color,
+      width,
+      particles: 0,
+    };
+  });
 
   if (trace) {
     // chunk satellites + flow particles for each retrieval-bearing stage
@@ -143,6 +180,9 @@ function buildGraphData(
         if (link.source === "rerank" || link.target === "rerank") link.particles = 4;
         if (link.target === "final" || link.source === "final") link.particles = 5;
         if (link.target === "llm" && trace.stages.llm.used) link.particles = 4;
+        if ((link.source === "security" || link.target === "security") && secureActive) {
+          link.particles = accessDenied ? 6 : 4;
+        }
       }
     }
   }
@@ -160,6 +200,10 @@ export function PipelineViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<unknown>(null);
   const [dims, setDims] = useState({ width: 0, height: 0 });
+  const { theme } = useTheme();
+  const sceneBg = theme === "dark" ? "#000000" : "#fafbff";
+  const stageEdgeColor = theme === "dark" ? "rgba(255,255,255,0.18)" : "rgba(15,23,42,0.20)";
+  const dimEdgeColor = theme === "dark" ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.08)";
 
   useEffect(() => {
     const el = containerRef.current;
@@ -172,8 +216,14 @@ export function PipelineViewer({
   }, []);
 
   const data = useMemo(
-    () => (architecture ? buildGraphData(architecture, trace) : null),
-    [architecture, trace],
+    () =>
+      architecture
+        ? buildGraphData(architecture, trace, {
+            stageEdge: stageEdgeColor,
+            dimEdge: dimEdgeColor,
+          })
+        : null,
+    [architecture, trace, stageEdgeColor, dimEdgeColor],
   );
 
   // Re-zoom to fit when trace changes
@@ -185,14 +235,14 @@ export function PipelineViewer({
   }, [data]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-black">
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-scene">
       {!architecture ? (
-        <div className="absolute inset-0 flex items-center justify-center text-white/60">
+        <div className="absolute inset-0 flex items-center justify-center text-muted-fg">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading pipeline…
         </div>
       ) : null}
       {loading ? (
-        <div className="pointer-events-none absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/70 px-3 py-1.5 text-xs text-white/80 backdrop-blur-md">
+        <div className="pointer-events-none absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-full border border-base bg-surface-overlay px-3 py-1.5 text-xs text-base-fg backdrop-blur-md">
           <Loader2 className="h-3 w-3 animate-spin" />
           Running pipeline…
         </div>
@@ -203,7 +253,7 @@ export function PipelineViewer({
           graphData={data}
           width={dims.width}
           height={dims.height}
-          backgroundColor="#000000"
+          backgroundColor={sceneBg}
           cooldownTicks={0}
           warmupTicks={0}
           enableNodeDrag={false}

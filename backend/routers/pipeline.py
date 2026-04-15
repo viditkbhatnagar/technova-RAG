@@ -57,6 +57,18 @@ def pipeline_architecture() -> PipelineArchitectureResponse:
             color="#a855f7",
         ),
         PipelineStageInfo(
+            id="security",
+            label="Security Gate",
+            description=(
+                "Optional. In secure mode, builds a clearance pre-filter from the "
+                "user's role and an allow-list of accessible chunk_ids that scope "
+                "the dense + BM25 searches. Inactive in open mode."
+            ),
+            role="filter",
+            model=None,
+            color="#f43f5e",
+        ),
+        PipelineStageInfo(
             id="dense",
             label="Dense (Qdrant)",
             description=(
@@ -123,8 +135,11 @@ def pipeline_architecture() -> PipelineArchitectureResponse:
 
     edges = [
         {"source": "query", "target": "embed"},
+        {"source": "query", "target": "security"},
         {"source": "embed", "target": "dense"},
         {"source": "query", "target": "bm25"},
+        {"source": "security", "target": "dense"},
+        {"source": "security", "target": "bm25"},
         {"source": "dense", "target": "rrf"},
         {"source": "bm25", "target": "rrf"},
         {"source": "rrf", "target": "rerank"},
@@ -251,10 +266,43 @@ async def pipeline_trace(req: PipelineTraceRequest, request: Request) -> Pipelin
 
     if restricted_info is not None:
         stages["security"] = {
+            "active": True,
             "role": req.role,
             "clearance": ROLE_CLEARANCE[req.role],
+            "allowed_chunk_count": len(allowed_ids) if allowed_ids is not None else 0,
             "restricted_probe": restricted_info,
         }
+    else:
+        stages["security"] = {
+            "active": False,
+            "role": None,
+            "clearance": None,
+            "allowed_chunk_count": None,
+            "restricted_probe": None,
+        }
+
+    # Access-denied heuristic mirrors self_correcting_retrieve:
+    # weak accessible top-1 + strong restricted match → deny
+    access_denied = False
+    access_denied_message: str | None = None
+    if req.mode == "secure" and restricted_info is not None:
+        top1_accessible = (
+            float(final_chunks[0].get("rerank_score", 0.0))
+            if final_chunks
+            else float("-inf")
+        )
+        restricted_strong = restricted_info["top_cosine"] >= 0.55
+        if not final_chunks and restricted_strong:
+            access_denied = True
+        elif restricted_strong and top1_accessible < 0.0:
+            access_denied = True
+        if access_denied:
+            access_denied_message = (
+                f"Relevant information exists in {restricted_info['count']} "
+                "chunk(s) that require higher clearance."
+            )
+            stages["final"]["top_k"] = []
+            stages["final"]["count"] = 0
 
     llm_used = False
     if req.run_llm:
@@ -287,4 +335,6 @@ async def pipeline_trace(req: PipelineTraceRequest, request: Request) -> Pipelin
         stages=stages,
         stats=stats,
         total_elapsed_ms=total_ms,
+        access_denied=access_denied,
+        access_denied_message=access_denied_message,
     )

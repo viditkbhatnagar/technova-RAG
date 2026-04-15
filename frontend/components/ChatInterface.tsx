@@ -103,7 +103,7 @@ export function ChatInterface({
   }
 
   return (
-    <div className="flex h-full flex-col bg-black/20">
+    <div className="flex h-full flex-col bg-surface-3">
       <ScrollArea className="flex-1">
         <div ref={scrollRef} className="mx-auto w-full max-w-3xl space-y-6 px-6 py-8">
           {messages.length === 0 && !loading ? (
@@ -114,13 +114,13 @@ export function ChatInterface({
           ))}
           {loading ? <LoadingBubble /> : null}
           {error ? (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-200">
               {error}
             </div>
           ) : null}
         </div>
       </ScrollArea>
-      <div className="border-t border-white/10 bg-black/40 p-4">
+      <div className="border-t border-soft bg-surface-overlay p-4 backdrop-blur-md">
         <form onSubmit={handleSubmit} className="mx-auto flex max-w-3xl items-center gap-2">
           <Input
             value={input}
@@ -133,7 +133,7 @@ export function ChatInterface({
                 : "Ask a question about TechNova's documents…"
             }
             disabled={disabled || loading}
-            className="flex-1 border-white/10 bg-white/5 text-white placeholder:text-white/40 focus-visible:ring-violet-400/50"
+            className="flex-1 border-base bg-surface-1 text-strong placeholder:text-faint focus-visible:ring-violet-400/50"
           />
           <Button
             type="submit"
@@ -163,14 +163,14 @@ function EmptyState({ mode }: { mode: Mode }) {
         ];
   return (
     <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-        <Sparkles className="h-6 w-6 text-violet-300" />
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-base bg-surface-1">
+        <Sparkles className="h-6 w-6 text-violet-500 dark:text-violet-300" />
       </div>
       <div>
-        <h3 className="text-lg font-semibold text-white">
+        <h3 className="text-lg font-semibold text-strong">
           {mode === "open" ? "Open RAG Chat" : "Secure RAG Chat"}
         </h3>
-        <p className="mt-1 max-w-md text-sm text-white/50">
+        <p className="mt-1 max-w-md text-sm text-faint">
           Grounded answers from TechNova&apos;s corpus. Every response is cited from retrieved
           chunks shown on the right.
         </p>
@@ -179,7 +179,7 @@ function EmptyState({ mode }: { mode: Mode }) {
         {samples.map((s) => (
           <span
             key={s}
-            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60"
+            className="rounded-full border border-base bg-surface-1 px-3 py-1 text-xs text-muted-fg"
           >
             {s}
           </span>
@@ -196,8 +196,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
           isUser
-            ? "border-violet-400/40 bg-violet-500/20 text-violet-200"
-            : "border-white/10 bg-white/5 text-white/70"
+            ? "border-violet-400/40 bg-violet-500/20 text-violet-700 dark:text-violet-200"
+            : "border-base bg-surface-1 text-muted-fg"
         }`}
       >
         {isUser ? <User className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
@@ -205,8 +205,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div
         className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
           isUser
-            ? "bg-violet-500/15 text-white"
-            : "border border-white/10 bg-white/5 text-white/90"
+            ? "bg-violet-500/15 text-strong"
+            : "border border-base bg-surface-1 text-base-fg"
         }`}
       >
         {message.accessDenied ? (
@@ -217,7 +217,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             />
           </div>
         ) : (
-          <div className="prose prose-invert prose-sm max-w-none prose-p:my-2 prose-headings:text-white prose-strong:text-white prose-a:text-violet-300">
+          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-headings:text-strong prose-strong:text-strong prose-a:text-violet-500 dark:prose-a:text-violet-300">
             <ReactMarkdown>{message.content}</ReactMarkdown>
           </div>
         )}
@@ -229,14 +229,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 function LoadingBubble() {
   return (
     <div className="flex gap-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-base bg-surface-1 text-muted-fg">
         <Sparkles className="h-4 w-4" />
       </div>
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+      <div className="rounded-2xl border border-base bg-surface-1 px-4 py-3">
         <div className="flex items-center gap-1">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/40 [animation-delay:0ms]" />
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/40 [animation-delay:150ms]" />
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/40 [animation-delay:300ms]" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-foreground/40 [animation-delay:0ms]" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-foreground/40 [animation-delay:150ms]" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-foreground/40 [animation-delay:300ms]" />
         </div>
       </div>
     </div>

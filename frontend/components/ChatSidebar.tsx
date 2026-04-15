@@ -65,12 +65,12 @@ export function ChatSidebar({
   }
 
   return (
-    <aside className="flex h-full min-h-0 w-64 flex-col border-r border-white/10 bg-black/40">
-      <div className="shrink-0 border-b border-white/10 p-3">
+    <aside className="flex h-full min-h-0 w-64 flex-col border-r border-soft bg-surface-overlay">
+      <div className="shrink-0 border-b border-soft p-3">
         <button
           type="button"
           onClick={onNew}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-base bg-surface-1 px-3 py-2 text-sm font-medium text-base-fg transition-colors hover:bg-surface-2 hover:text-strong"
         >
           <MessagesSquare className="h-4 w-4" />
           New chat
@@ -78,12 +78,12 @@ export function ChatSidebar({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-xs text-white/40">
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-faint">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Loading…
           </div>
         ) : sessions.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 px-4 text-center text-xs text-white/40">
+          <div className="flex flex-col items-center gap-2 py-10 px-4 text-center text-xs text-faint">
             <MessagesSquare className="h-6 w-6 opacity-50" />
             <p>No conversations yet. Send a message to start one.</p>
           </div>
@@ -98,23 +98,23 @@ export function ChatSidebar({
                     onClick={() => onSelect(s.id)}
                     className={`group flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
                       active
-                        ? "bg-violet-500/15 text-white"
-                        : "text-white/80 hover:bg-white/5"
+                        ? "bg-violet-500/15 text-strong"
+                        : "text-base-fg hover:bg-surface-1"
                     }`}
                   >
                     <MessageSquarePlus
                       className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
-                        active ? "text-violet-300" : "text-white/40"
+                        active ? "text-violet-500 dark:text-violet-300" : "text-faint"
                       }`}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs leading-tight text-white/90">
+                      <span className="block truncate text-xs leading-tight text-base-fg">
                         {s.title || "(untitled)"}
                       </span>
-                      <span className="mt-0.5 flex items-center gap-2 text-[10px] text-white/40">
+                      <span className="mt-0.5 flex items-center gap-2 text-[10px] text-faint">
                         <span>{relativeTime(s.updated_at)}</span>
                         {s.role ? (
-                          <span className="rounded bg-white/10 px-1 py-px text-[9px] uppercase tracking-wider">
+                          <span className="rounded bg-surface-2 px-1 py-px text-[9px] uppercase tracking-wider">
                             {s.role}
                           </span>
                         ) : null}
@@ -124,7 +124,7 @@ export function ChatSidebar({
                     <button
                       type="button"
                       onClick={(e) => handleDelete(e, s.id)}
-                      className="invisible mt-0.5 rounded p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-red-300 group-hover:visible"
+                      className="invisible mt-0.5 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-red-500 dark:hover:text-red-300 group-hover:visible"
                       aria-label="Delete conversation"
                     >
                       <Trash2 className="h-3 w-3" />

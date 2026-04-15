@@ -13,7 +13,7 @@ export function DocumentCard({ doc }: DocumentCardProps) {
   return (
     <Link
       href={`/documents/${doc.doc_slug}`}
-      className="group relative flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.07]"
+      className="group relative flex flex-col rounded-2xl border border-base bg-surface-1 p-5 shadow-card transition-all hover:-translate-y-0.5 hover:border-strong hover:bg-surface-2"
     >
       <div
         className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
@@ -30,15 +30,15 @@ export function DocumentCard({ doc }: DocumentCardProps) {
           </Badge>
           <Badge
             variant="outline"
-            className="border-white/20 text-[10px] text-white/60"
+            className="border-base text-[10px] text-muted-fg"
           >
             {doc.domain}
           </Badge>
         </div>
-        <h3 className="text-balance text-lg font-semibold leading-tight text-white">
+        <h3 className="text-balance text-lg font-semibold leading-tight text-strong">
           {doc.doc_name}
         </h3>
-        <p className="mt-1 truncate font-mono text-[11px] text-white/40">
+        <p className="mt-1 truncate font-mono text-[11px] text-faint">
           {doc.file_name}
         </p>
         <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
@@ -46,9 +46,9 @@ export function DocumentCard({ doc }: DocumentCardProps) {
           <Stat icon={<Layers className="h-3 w-3" />} label="Chunks" value={doc.chunk_count} />
           <Stat icon={<Hash className="h-3 w-3" />} label="Chars" value={doc.char_count.toLocaleString()} />
         </div>
-        <div className="mt-5 flex items-center justify-between text-xs text-white/50">
-          <span className="font-mono text-[10px] text-white/30">{doc.doc_slug}</span>
-          <span className="inline-flex items-center gap-1 text-white/60 transition-colors group-hover:text-white">
+        <div className="mt-5 flex items-center justify-between text-xs text-faint">
+          <span className="font-mono text-[10px] text-ghost">{doc.doc_slug}</span>
+          <span className="inline-flex items-center gap-1 text-muted-fg transition-colors group-hover:text-strong">
             Open
             <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
           </span>
@@ -68,12 +68,12 @@ function Stat({
   value: number | string;
 }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1.5">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/40">
+    <div className="rounded-md border border-soft bg-surface-3 px-2 py-1.5">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-faint">
         {icon}
         {label}
       </div>
-      <div className="mt-0.5 font-mono text-sm text-white/90">{value}</div>
+      <div className="mt-0.5 font-mono text-sm text-strong">{value}</div>
     </div>
   );
 }

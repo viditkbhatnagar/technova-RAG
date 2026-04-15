@@ -2,18 +2,24 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Play } from "lucide-react";
+import { ArrowLeft, Loader2, Play, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PipelineViewer } from "@/components/PipelineViewer";
 import { StagePanel } from "@/components/StagePanel";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { fetchPipelineArchitecture, tracePipeline } from "@/lib/api";
 import type {
+  Mode,
   PipelineArchitecture,
   PipelineCandidate,
   PipelineStage,
   PipelineTrace,
+  Role,
 } from "@/lib/api";
+import { ROLE_META } from "@/lib/types";
+
+const ROLES: Role[] = ["employee", "manager", "admin"];
 
 export default function PipelinePage() {
   const [arch, setArch] = useState<PipelineArchitecture | null>(null);
@@ -21,6 +27,8 @@ export default function PipelinePage() {
   const [query, setQuery] = useState("What is the leave policy?");
   const [running, setRunning] = useState(false);
   const [runLLM, setRunLLM] = useState(true);
+  const [mode, setMode] = useState<Mode>("open");
+  const [role, setRole] = useState<Role>("employee");
   const [error, setError] = useState<string | null>(null);
   const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null);
   const [selectedCand, setSelectedCand] = useState<{ cand: PipelineCandidate; stageId: string } | null>(null);
@@ -45,15 +53,24 @@ export default function PipelinePage() {
     setRunning(true);
     setError(null);
     try {
-      const t = await tracePipeline({ query: q, mode: "open", run_llm: runLLM });
+      const t = await tracePipeline({
+        query: q,
+        mode,
+        role: mode === "secure" ? role : undefined,
+        run_llm: runLLM,
+      });
       setTrace(t);
       setSelectedCand(null);
+      if (t.access_denied) {
+        const securityStage = arch?.stages.find((s) => s.id === "security") ?? null;
+        setSelectedStage(securityStage);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Trace failed");
     } finally {
       setRunning(false);
     }
-  }, [query, runLLM]);
+  }, [arch, query, mode, role, runLLM]);
 
   const onClear = useCallback(() => {
     setTrace(null);
@@ -62,21 +79,56 @@ export default function PipelinePage() {
   }, []);
 
   return (
-    <main className="relative flex h-screen flex-col bg-[#050507] text-white">
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-white/10 bg-black/50 px-5 py-3 backdrop-blur-md">
+    <main className="relative flex h-screen flex-col bg-app text-base-fg">
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-soft bg-surface-overlay px-5 py-3 backdrop-blur-md">
         <Link
           href="/"
-          className="inline-flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white/80"
+          className="inline-flex items-center gap-1 text-xs text-faint transition-colors hover:text-strong"
         >
           <ArrowLeft className="h-3 w-3" /> Home
         </Link>
-        <div className="ml-2 hidden h-4 w-px bg-white/15 sm:block" />
-        <h1 className="text-sm font-semibold">Pipeline Visualizer</h1>
-        <p className="hidden text-xs text-white/40 sm:block">
-          {trace
-            ? "Live trace · click any node for details"
-            : "Static architecture · run a query to see live data flow"}
-        </p>
+        <div className="ml-2 hidden h-4 w-px bg-base sm:block" />
+        <h1 className="text-sm font-semibold text-strong">Pipeline Visualizer</h1>
+
+        <div className="ml-2 inline-flex rounded-md border border-base bg-surface-1 p-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setMode("open")}
+            className={`rounded px-2.5 py-1 transition-colors ${
+              mode === "open" ? "bg-surface-2 text-strong" : "text-muted-fg hover:text-strong"
+            }`}
+          >
+            Open
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("secure")}
+            className={`rounded px-2.5 py-1 transition-colors ${
+              mode === "secure" ? "bg-rose-500/20 text-rose-700 dark:text-rose-200" : "text-muted-fg hover:text-strong"
+            }`}
+          >
+            Secure
+          </button>
+        </div>
+
+        {mode === "secure" ? (
+          <div className="inline-flex rounded-md border border-base bg-surface-1 p-0.5 text-[11px]">
+            {ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRole(r)}
+                title={ROLE_META[r].description}
+                className={`rounded px-2.5 py-1 transition-colors ${
+                  role === r ? "bg-violet-500/20 text-violet-700 dark:text-violet-200" : "text-muted-fg hover:text-strong"
+                }`}
+              >
+                {ROLE_META[r].label}
+                <span className="ml-1 text-[10px] text-faint">L{ROLE_META[r].clearance}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className="ml-auto flex flex-1 items-center gap-2 sm:flex-none">
           <Input
@@ -86,9 +138,9 @@ export default function PipelinePage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !running) onRun();
             }}
-            className="w-full bg-white/5 sm:w-80"
+            className="w-full bg-surface-1 sm:w-72"
           />
-          <label className="hidden cursor-pointer items-center gap-1.5 text-[11px] text-white/60 sm:flex">
+          <label className="hidden cursor-pointer items-center gap-1.5 text-[11px] text-muted-fg sm:flex">
             <input
               type="checkbox"
               checked={runLLM}
@@ -113,17 +165,32 @@ export default function PipelinePage() {
               Clear
             </Button>
           ) : null}
+          <ThemeToggle />
         </div>
       </header>
 
       {error ? (
-        <div className="border-b border-red-500/30 bg-red-500/10 px-5 py-2 text-xs text-red-200">
+        <div className="border-b border-red-500/40 bg-red-500/10 px-5 py-2 text-xs text-red-700 dark:text-red-200">
           {error}
+        </div>
+      ) : null}
+      {trace?.access_denied ? (
+        <div className="flex items-start gap-2 border-b border-red-500/40 bg-red-500/10 px-5 py-3 text-xs text-red-700 dark:text-red-100">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <div className="font-semibold">
+              Access denied for role <span className="font-mono">{trace.role}</span>
+            </div>
+            <div className="opacity-80">
+              {trace.access_denied_message ??
+                "The accessible corpus didn't yield a strong match, but restricted chunks did."}
+            </div>
+          </div>
         </div>
       ) : null}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_400px]">
-        <div className="relative min-h-0 border-b border-white/10 lg:border-b-0 lg:border-r">
+        <div className="relative min-h-0 border-b border-soft lg:border-b-0 lg:border-r">
           <PipelineViewer
             architecture={arch}
             trace={trace}
@@ -139,7 +206,7 @@ export default function PipelinePage() {
           />
           {trace ? <StatsBar trace={trace} /> : null}
         </div>
-        <aside className="min-h-0 overflow-hidden bg-black/40">
+        <aside className="min-h-0 overflow-hidden bg-surface-overlay">
           <StagePanel
             selectedStage={selectedStage}
             selectedCandidate={selectedCand}
@@ -157,8 +224,13 @@ export default function PipelinePage() {
 
 function StatsBar({ trace }: { trace: PipelineTrace }) {
   const s = trace.stages;
+  const sec = s.security;
   return (
-    <div className="absolute bottom-3 left-1/2 z-10 flex max-w-[95%] -translate-x-1/2 flex-wrap items-center gap-2 rounded-full border border-white/10 bg-black/70 px-4 py-2 text-[11px] backdrop-blur-md">
+    <div className="absolute bottom-3 left-1/2 z-10 flex max-w-[95%] -translate-x-1/2 flex-wrap items-center gap-2 rounded-full border border-base bg-surface-overlay px-4 py-2 text-[11px] shadow-card backdrop-blur-md">
+      <Pill label="mode" value={trace.mode} highlight={trace.mode === "secure"} />
+      {sec?.active ? (
+        <Pill label="role" value={`${sec.role} · L${sec.clearance}`} highlight />
+      ) : null}
       <Pill label="embed" value={`${s.embed.elapsed_ms}ms`} />
       <Pill label="dense" value={`${s.dense.candidates.length}·${s.dense.elapsed_ms}ms`} />
       <Pill label="bm25" value={`${s.bm25.candidates.length}·${s.bm25.elapsed_ms}ms`} />
@@ -173,9 +245,9 @@ function StatsBar({ trace }: { trace: PipelineTrace }) {
 
 function Pill({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-1 ${highlight ? "text-white" : "text-white/70"}`}>
-      <span className="text-white/40">{label}</span>
-      <span className={`font-mono ${highlight ? "text-white" : "text-white/85"}`}>{value}</span>
+    <span className={`inline-flex items-center gap-1 ${highlight ? "text-strong" : "text-muted-fg"}`}>
+      <span className="text-faint">{label}</span>
+      <span className={`font-mono ${highlight ? "text-strong" : "text-base-fg"}`}>{value}</span>
     </span>
   );
 }

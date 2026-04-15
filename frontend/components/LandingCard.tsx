@@ -14,7 +14,7 @@ export function LandingCard({ icon, title, description, href, accent }: LandingC
   return (
     <Link href={href} className="group block">
       <Card
-        className={`relative h-full overflow-hidden border-white/10 bg-white/5 backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-white/10`}
+        className={`relative h-full overflow-hidden border-base bg-surface-1 shadow-card backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-strong hover:bg-surface-2`}
       >
         <div
           className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
@@ -29,8 +29,8 @@ export function LandingCard({ icon, title, description, href, accent }: LandingC
           >
             {icon}
           </div>
-          <CardTitle className="text-2xl tracking-tight text-white">{title}</CardTitle>
-          <CardDescription className="text-sm leading-relaxed text-white/60">
+          <CardTitle className="text-2xl tracking-tight text-strong">{title}</CardTitle>
+          <CardDescription className="text-sm leading-relaxed text-muted-fg">
             {description}
           </CardDescription>
         </CardHeader>

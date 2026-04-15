@@ -7,6 +7,7 @@ import { ChatInterface } from "@/components/ChatInterface";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { SourcePanel } from "@/components/SourcePanel";
 import { RoleSelector } from "@/components/RoleSelector";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { getSession, type ChunkResult, type RetrievalStats, type Role } from "@/lib/api";
 import type { ChatMessage } from "@/lib/types";
 
@@ -61,9 +62,9 @@ export default function ProjectBPage() {
   }, [sessionId]);
 
   return (
-    <main className="flex h-screen flex-col bg-[#0a0a0c] text-white">
+    <main className="flex h-screen flex-col bg-app text-base-fg">
       <Header />
-      <div className="border-b border-white/10 bg-black/30 px-5 py-3">
+      <div className="border-b border-soft bg-surface-3 px-5 py-3">
         <RoleSelector role={role} onChange={handleRoleChange} />
       </div>
       <div className="grid flex-1 grid-cols-[16rem_minmax(0,1fr)] overflow-hidden lg:grid-cols-[16rem_3fr_2fr]">
@@ -107,24 +108,24 @@ export default function ProjectBPage() {
 
 function Header() {
   return (
-    <div className="flex items-center justify-between border-b border-white/10 bg-black/40 px-5 py-3">
+    <div className="flex items-center justify-between border-b border-soft bg-surface-overlay px-5 py-3 backdrop-blur-md">
       <Link
         href="/"
-        className="inline-flex items-center gap-2 text-sm text-white/60 transition-colors hover:text-white"
+        className="inline-flex items-center gap-2 text-sm text-muted-fg transition-colors hover:text-strong"
       >
         <ArrowLeft className="h-4 w-4" />
         Back
       </Link>
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm text-strong">
           <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
           <span className="font-semibold">Project B · Secure RAG</span>
         </div>
-        <span className="hidden text-xs text-white/40 sm:inline">
+        <span className="hidden text-xs text-faint sm:inline">
           Role-based access · Security pre-filter
         </span>
       </div>
-      <div className="w-16" />
+      <ThemeToggle />
     </div>
   );
 }

@@ -1,24 +1,38 @@
 import { LandingCard } from "@/components/LandingCard";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function LandingPage() {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0a0a0c]">
+    <main className="relative min-h-screen overflow-hidden bg-app">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-0 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-violet-600/20 blur-[120px]" />
-        <div className="absolute bottom-0 right-0 h-[500px] w-[500px] rounded-full bg-sky-600/10 blur-[120px]" />
-        <div className="absolute left-0 top-1/2 h-[400px] w-[400px] rounded-full bg-fuchsia-600/10 blur-[120px]" />
+        <div
+          className="absolute left-1/2 top-0 h-[600px] w-[600px] -translate-x-1/2 rounded-full blur-[120px]"
+          style={{ background: "var(--app-bg-image-1)" }}
+        />
+        <div
+          className="absolute bottom-0 right-0 h-[500px] w-[500px] rounded-full blur-[120px]"
+          style={{ background: "var(--app-bg-image-2)" }}
+        />
+        <div
+          className="absolute left-0 top-1/2 h-[400px] w-[400px] rounded-full blur-[120px]"
+          style={{ background: "var(--app-bg-image-3)" }}
+        />
+      </div>
+
+      <div className="absolute right-5 top-5 z-10">
+        <ThemeToggle />
       </div>
 
       <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-16 sm:py-24">
         <header className="mb-14 text-center sm:mb-20">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60 backdrop-blur-md">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-base bg-surface-1 px-3 py-1 text-xs text-muted-fg backdrop-blur-md">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Hybrid retrieval · BM25 + Dense · Cross-encoder reranking
           </div>
-          <h1 className="text-balance text-4xl font-semibold tracking-tight text-white sm:text-6xl">
+          <h1 className="text-balance text-4xl font-semibold tracking-tight text-strong sm:text-6xl">
             TechNova RAG Platform
           </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-balance text-base text-white/60 sm:text-lg">
+          <p className="mx-auto mt-5 max-w-2xl text-balance text-base text-muted-fg sm:text-lg">
             A grounded, role-aware retrieval system over 11 TechNova documents. Chat openly,
             chat securely, or explore the knowledge graph in 3D.
           </p>
@@ -62,7 +76,7 @@ export default function LandingPage() {
           />
         </div>
 
-        <footer className="mt-14 text-center text-xs text-white/30 sm:mt-20">
+        <footer className="mt-14 text-center text-xs text-ghost sm:mt-20">
           FastAPI · Qdrant · BGE embeddings · spaCy NER · gpt-4o-mini
         </footer>
       </div>

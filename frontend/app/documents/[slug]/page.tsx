@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChunkViewer } from "@/components/ChunkViewer";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { fetchDocument, fetchDocumentChunks } from "@/lib/api";
 import type { ChunkRecord, DocumentDetail } from "@/lib/api";
 import { SECURITY_COLORS } from "@/lib/types";
@@ -75,7 +76,7 @@ export default function DocumentDetailPage({ params }: { params: Promise<{ slug:
   const canNext = pageEnd < total;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0a0a0c]">
+    <main className="relative min-h-screen overflow-hidden bg-app text-base-fg">
       <div className="pointer-events-none absolute inset-0">
         {sec ? (
           <div
@@ -85,64 +86,68 @@ export default function DocumentDetailPage({ params }: { params: Promise<{ slug:
         ) : null}
       </div>
 
+      <div className="absolute right-5 top-5 z-10">
+        <ThemeToggle />
+      </div>
+
       <div className="relative mx-auto max-w-4xl px-6 py-12">
         <Link
           href="/documents"
-          className="mb-6 inline-flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white/80"
+          className="mb-6 inline-flex items-center gap-1 text-xs text-faint transition-colors hover:text-strong"
         >
           <ArrowLeft className="h-3 w-3" />
           All documents
         </Link>
 
         {error ? (
-          <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+          <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-200">
             {error}
           </div>
         ) : null}
 
         {doc ? (
           <>
-            <div className="mb-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="mb-8 rounded-2xl border border-base bg-surface-1 p-6 shadow-card">
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
                 {sec ? (
                   <Badge className={`${sec.bg} ${sec.text} ${sec.border} border text-[10px] font-semibold`}>
                     {sec.label}
                   </Badge>
                 ) : null}
-                <Badge variant="outline" className="border-white/20 text-[10px] text-white/60">
+                <Badge variant="outline" className="border-base text-[10px] text-muted-fg">
                   {doc.domain}
                 </Badge>
               </div>
-              <h1 className="text-balance text-3xl font-semibold tracking-tight text-white">
+              <h1 className="text-balance text-3xl font-semibold tracking-tight text-strong">
                 {doc.doc_name}
               </h1>
-              <p className="mt-1 font-mono text-xs text-white/40">{doc.file_name}</p>
+              <p className="mt-1 font-mono text-xs text-faint">{doc.file_name}</p>
               <div className="mt-5 grid grid-cols-3 gap-3">
                 <Stat icon={<FileText className="h-3 w-3" />} label="Pages" value={doc.page_count} />
                 <Stat icon={<Layers className="h-3 w-3" />} label="Chunks" value={doc.chunk_count} />
                 <Stat icon={<Hash className="h-3 w-3" />} label="Chars" value={doc.char_count.toLocaleString()} />
               </div>
-              <div className="mt-5 rounded-lg border border-white/10 bg-black/30 p-3">
-                <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/40">
+              <div className="mt-5 rounded-lg border border-soft bg-surface-3 p-3">
+                <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-faint">
                   <Database className="h-3 w-3" /> Open in Neon
                 </div>
-                <code className="block whitespace-pre-wrap font-mono text-[11px] text-white/70">
+                <code className="block whitespace-pre-wrap font-mono text-[11px] text-muted-fg">
                   {sql}
                 </code>
               </div>
             </div>
 
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-white/70">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-fg">
                 Chunks
               </h2>
-              <span className="font-mono text-xs text-white/40">
+              <span className="font-mono text-xs text-faint">
                 {total === 0 ? "—" : `${offset + 1}–${pageEnd} of ${total}`}
               </span>
             </div>
 
             {loading ? (
-              <div className="flex h-40 items-center justify-center text-sm text-white/40">
+              <div className="flex h-40 items-center justify-center text-sm text-faint">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Loading chunks…
               </div>
@@ -176,7 +181,7 @@ export default function DocumentDetailPage({ params }: { params: Promise<{ slug:
             ) : null}
           </>
         ) : !error ? (
-          <div className="flex h-64 items-center justify-center text-sm text-white/40">
+          <div className="flex h-64 items-center justify-center text-sm text-faint">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : null}
@@ -195,12 +200,12 @@ function Stat({
   value: number | string;
 }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/40">
+    <div className="rounded-md border border-soft bg-surface-3 px-3 py-2">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-faint">
         {icon}
         {label}
       </div>
-      <div className="mt-1 font-mono text-lg text-white/90">{value}</div>
+      <div className="mt-1 font-mono text-lg text-strong">{value}</div>
     </div>
   );
 }

@@ -117,14 +117,101 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* ---------- semantic theme tokens (light defaults, dark overrides) ---------- */
+:root {
+  --app-bg: #f6f7fb;
+  --app-bg-image-1: rgba(139, 92, 246, 0.08);
+  --app-bg-image-2: rgba(56, 189, 248, 0.06);
+  --app-bg-image-3: rgba(236, 72, 153, 0.05);
+  --surface-1: rgba(255, 255, 255, 0.85);
+  --surface-2: rgba(255, 255, 255, 0.65);
+  --surface-3: rgba(15, 23, 42, 0.04);
+  --surface-input: rgba(15, 23, 42, 0.04);
+  --surface-overlay: rgba(255, 255, 255, 0.92);
+  --surface-scene: #fafbff;
+  --border-soft: rgba(15, 23, 42, 0.08);
+  --border-base: rgba(15, 23, 42, 0.14);
+  --border-strong: rgba(15, 23, 42, 0.22);
+  --text-strong: #0f172a;
+  --text-base: rgba(15, 23, 42, 0.85);
+  --text-muted: rgba(15, 23, 42, 0.62);
+  --text-faint: rgba(15, 23, 42, 0.45);
+  --text-ghost: rgba(15, 23, 42, 0.28);
+  --text-on-accent: #ffffff;
+  --shadow-card: 0 8px 24px -12px rgba(15, 23, 42, 0.18);
+  --scene-bg: #fafbff;
+  --scene-fg: #0f172a;
+}
+
+.dark {
+  --app-bg: #0a0a0c;
+  --app-bg-image-1: rgba(139, 92, 246, 0.18);
+  --app-bg-image-2: rgba(2, 132, 199, 0.08);
+  --app-bg-image-3: rgba(217, 70, 239, 0.08);
+  --surface-1: rgba(255, 255, 255, 0.05);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-3: rgba(0, 0, 0, 0.3);
+  --surface-input: rgba(255, 255, 255, 0.05);
+  --surface-overlay: rgba(0, 0, 0, 0.78);
+  --surface-scene: #000000;
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --border-base: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --text-strong: #ffffff;
+  --text-base: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.62);
+  --text-faint: rgba(255, 255, 255, 0.42);
+  --text-ghost: rgba(255, 255, 255, 0.28);
+  --text-on-accent: #ffffff;
+  --shadow-card: 0 8px 24px -10px rgba(0, 0, 0, 0.6);
+  --scene-bg: #000000;
+  --scene-fg: #ffffff;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--app-bg);
+    color: var(--text-base);
+    @apply font-sans;
   }
   html {
     @apply font-sans;
+    color-scheme: light;
   }
+  html.dark {
+    color-scheme: dark;
+  }
+}
+
+/* ---------- semantic utility classes ---------- */
+@layer utilities {
+  .bg-app { background-color: var(--app-bg); }
+  .bg-surface-1 { background-color: var(--surface-1); }
+  .bg-surface-2 { background-color: var(--surface-2); }
+  .bg-surface-3 { background-color: var(--surface-3); }
+  .bg-surface-input { background-color: var(--surface-input); }
+  .bg-surface-overlay { background-color: var(--surface-overlay); }
+  .bg-scene { background-color: var(--surface-scene); }
+
+  .border-soft { border-color: var(--border-soft); }
+  .border-base { border-color: var(--border-base); }
+  .border-strong { border-color: var(--border-strong); }
+
+  .text-strong { color: var(--text-strong); }
+  .text-base-fg { color: var(--text-base); }
+  .text-muted-fg { color: var(--text-muted); }
+  .text-faint { color: var(--text-faint); }
+  .text-ghost { color: var(--text-ghost); }
+
+  .hover\:bg-surface-2:hover { background-color: var(--surface-2); }
+  .hover\:border-base:hover { border-color: var(--border-base); }
+  .hover\:border-strong:hover { border-color: var(--border-strong); }
+  .hover\:text-strong:hover { color: var(--text-strong); }
+  .hover\:text-base-fg:hover { color: var(--text-base); }
+  .hover\:text-muted-fg:hover { color: var(--text-muted); }
+
+  .shadow-card { box-shadow: var(--shadow-card); }
 }

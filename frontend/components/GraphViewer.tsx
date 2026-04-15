@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { fetchGraph, type GraphData, type GraphEdge, type GraphNode } from "@/lib/api";
 import { ENTITY_COLORS, SECURITY_COLORS } from "@/lib/types";
+import { useTheme } from "@/lib/theme";
 
 const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), { ssr: false });
 
@@ -59,6 +60,8 @@ export function GraphViewer() {
   const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null);
   const [dims, setDims] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const { theme } = useTheme();
+  const sceneBg = theme === "dark" ? "#000000" : "#fafbff";
 
   useEffect(() => {
     let cancelled = false;
@@ -99,9 +102,9 @@ export function GraphViewer() {
   }, [data]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-black">
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-scene">
       {!data && !error ? (
-        <div className="absolute inset-0 flex items-center justify-center text-white/60">
+        <div className="absolute inset-0 flex items-center justify-center text-muted-fg">
           <div className="flex items-center gap-2">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span>Loading knowledge graph…</span>
@@ -110,7 +113,7 @@ export function GraphViewer() {
       ) : null}
       {error ? (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+          <div className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-200">
             {error}
           </div>
         </div>
@@ -120,7 +123,7 @@ export function GraphViewer() {
           graphData={graphData}
           width={dims.width}
           height={dims.height}
-          backgroundColor="#000000"
+          backgroundColor={sceneBg}
           nodeLabel={((n: unknown) => {
             const node = n as ForceNode;
             return `${node.label} (${node.type})`;
@@ -187,16 +190,16 @@ function InfoPanel({ node, onClose }: { node: GraphNode; onClose: () => void }) 
   const sec =
     typeof node.security_level === "number" ? SECURITY_COLORS[node.security_level] : null;
   return (
-    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-white/15 bg-black/80 text-white shadow-2xl backdrop-blur-md">
-      <div className="flex items-start justify-between gap-2 border-b border-white/10 p-4">
+    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-base bg-surface-overlay text-base-fg shadow-card backdrop-blur-md">
+      <div className="flex items-start justify-between gap-2 border-b border-soft p-4">
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider text-white/40">{node.type}</div>
-          <div className="mt-0.5 truncate text-base font-semibold">{node.label}</div>
+          <div className="text-[10px] uppercase tracking-wider text-faint">{node.type}</div>
+          <div className="mt-0.5 truncate text-base font-semibold text-strong">{node.label}</div>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+          className="rounded-md p-1 text-faint transition-colors hover:bg-surface-2 hover:text-strong"
         >
           <X className="h-4 w-4" />
         </button>
@@ -219,23 +222,23 @@ function InfoPanel({ node, onClose }: { node: GraphNode; onClose: () => void }) 
         ) : null}
         {node.parent_doc ? (
           <Row label="Parent Doc">
-            <span className="truncate text-white/70">{String(node.parent_doc)}</span>
+            <span className="truncate text-muted-fg">{String(node.parent_doc)}</span>
           </Row>
         ) : null}
         {node.text_preview ? (
           <>
-            <Separator className="bg-white/10" />
-            <div className="text-xs text-white/60">Preview</div>
-            <p className="text-xs leading-relaxed text-white/80">{String(node.text_preview)}</p>
+            <Separator className="bg-base" />
+            <div className="text-xs text-muted-fg">Preview</div>
+            <p className="text-xs leading-relaxed text-base-fg">{String(node.text_preview)}</p>
           </>
         ) : null}
         {node.metadata && typeof node.metadata === "object" ? (
           <>
-            <Separator className="bg-white/10" />
-            <div className="space-y-1 text-xs text-white/70">
+            <Separator className="bg-base" />
+            <div className="space-y-1 text-xs text-muted-fg">
               {Object.entries(node.metadata as Record<string, unknown>).map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-2">
-                  <span className="text-white/40">{k}</span>
+                  <span className="text-faint">{k}</span>
                   <span className="truncate">{String(v)}</span>
                 </div>
               ))}
@@ -250,16 +253,16 @@ function InfoPanel({ node, onClose }: { node: GraphNode; onClose: () => void }) 
 function EdgePanel({ edge, onClose }: { edge: SelectedEdge; onClose: () => void }) {
   const prettyType = edge.type.replace(/_/g, " ");
   return (
-    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-white/15 bg-black/80 text-white shadow-2xl backdrop-blur-md">
-      <div className="flex items-start justify-between gap-2 border-b border-white/10 p-4">
+    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-base bg-surface-overlay text-base-fg shadow-card backdrop-blur-md">
+      <div className="flex items-start justify-between gap-2 border-b border-soft p-4">
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider text-white/40">Relationship</div>
-          <div className="mt-0.5 truncate text-base font-semibold">{prettyType}</div>
+          <div className="text-[10px] uppercase tracking-wider text-faint">Relationship</div>
+          <div className="mt-0.5 truncate text-base font-semibold text-strong">{prettyType}</div>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+          className="rounded-md p-1 text-faint transition-colors hover:bg-surface-2 hover:text-strong"
         >
           <X className="h-4 w-4" />
         </button>
@@ -269,18 +272,18 @@ function EdgePanel({ edge, onClose }: { edge: SelectedEdge; onClose: () => void 
           <EndpointChip node={edge.source} />
         </Row>
         <Row label="Predicate">
-          <span className="font-mono text-xs text-violet-300">{edge.label}</span>
+          <span className="font-mono text-xs text-violet-500 dark:text-violet-300">{edge.label}</span>
         </Row>
         <Row label="Target">
           <EndpointChip node={edge.target} />
         </Row>
         {typeof edge.weight === "number" ? (
           <Row label="Weight">
-            <span className="font-mono text-xs text-white/70">×{edge.weight}</span>
+            <span className="font-mono text-xs text-muted-fg">×{edge.weight}</span>
           </Row>
         ) : null}
-        <Separator className="bg-white/10" />
-        <p className="text-xs leading-relaxed text-white/60">
+        <Separator className="bg-base" />
+        <p className="text-xs leading-relaxed text-muted-fg">
           {edge.type === "contains"
             ? "Document node contains this chunk."
             : edge.type === "mentions"
@@ -308,7 +311,7 @@ function EndpointChip({ node }: { node: GraphNode }) {
   return (
     <span className="inline-flex max-w-[12rem] items-center gap-1.5">
       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="truncate text-xs text-white/80">{node.label}</span>
+      <span className="truncate text-xs text-base-fg">{node.label}</span>
     </span>
   );
 }
@@ -316,7 +319,7 @@ function EndpointChip({ node }: { node: GraphNode }) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-xs uppercase tracking-wider text-white/40">{label}</span>
+      <span className="text-xs uppercase tracking-wider text-faint">{label}</span>
       <span className="text-sm">{children}</span>
     </div>
   );
@@ -326,7 +329,7 @@ function StatsBar({ data }: { data: GraphData }) {
   const s = data.stats;
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
-      <div className="pointer-events-auto flex gap-6 rounded-full border border-white/10 bg-black/60 px-6 py-2 text-xs text-white/70 backdrop-blur-md">
+      <div className="pointer-events-auto flex gap-6 rounded-full border border-base bg-surface-overlay px-6 py-2 text-xs text-muted-fg shadow-card backdrop-blur-md">
         <Stat label="Documents" value={s.total_documents} />
         <Stat label="Chunks" value={s.total_chunks} />
         <Stat label="Entities" value={s.total_entities} />
@@ -339,16 +342,16 @@ function StatsBar({ data }: { data: GraphData }) {
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="uppercase tracking-wider text-white/40">{label}</span>
-      <span className="font-mono font-semibold text-white">{value}</span>
+      <span className="uppercase tracking-wider text-faint">{label}</span>
+      <span className="font-mono font-semibold text-strong">{value}</span>
     </div>
   );
 }
 
 function Legend() {
   return (
-    <div className="absolute left-4 top-4 space-y-2 rounded-xl border border-white/10 bg-black/60 p-3 text-xs text-white/70 backdrop-blur-md">
-      <div className="font-semibold uppercase tracking-wider text-white/50">Nodes</div>
+    <div className="absolute left-4 top-4 space-y-2 rounded-xl border border-base bg-surface-overlay p-3 text-xs text-muted-fg shadow-card backdrop-blur-md">
+      <div className="font-semibold uppercase tracking-wider text-faint">Nodes</div>
       <div className="space-y-1">
         {[0, 1, 2, 3].map((lvl) => {
           const s = SECURITY_COLORS[lvl];

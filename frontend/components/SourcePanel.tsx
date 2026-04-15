@@ -15,9 +15,9 @@ interface SourcePanelProps {
 
 function methodBadgeClass(method: string): string {
   const m = method.toLowerCase();
-  if (m === "dense") return "bg-sky-500/15 text-sky-300 border-sky-500/40";
-  if (m === "bm25") return "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40";
-  return "bg-violet-500/15 text-violet-300 border-violet-500/40";
+  if (m === "dense") return "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/40";
+  if (m === "bm25") return "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-500/40";
+  return "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/40";
 }
 
 function methodLabel(method: string): string {
@@ -29,9 +29,9 @@ function methodLabel(method: string): string {
 
 export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col border-l border-white/10 bg-black/30">
-      <div className="shrink-0 border-b border-white/10 px-5 py-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-white/70">
+    <div className="flex h-full min-h-0 flex-col border-l border-soft bg-surface-3">
+      <div className="shrink-0 border-b border-soft px-5 py-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-fg">
           Retrieved Sources
         </h2>
         {stats && sources.length > 0 ? (
@@ -61,7 +61,7 @@ export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="space-y-3 p-5">
           {sources.length === 0 ? (
-            <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center text-sm text-white/40">
+            <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center text-sm text-faint">
               <FileText className="mb-2 h-8 w-8 opacity-40" />
               <p>{emptyLabel || "Ask a question to see retrieved sources."}</p>
             </div>
@@ -76,12 +76,12 @@ export function SourcePanel({ sources, stats, emptyLabel }: SourcePanelProps) {
 
 function StatPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1.5">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/40">
+    <div className="rounded-md border border-soft bg-surface-1 px-2 py-1.5">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-faint">
         {icon}
         {label}
       </div>
-      <div className="mt-0.5 font-mono text-sm text-white/90">{value}</div>
+      <div className="mt-0.5 font-mono text-sm text-strong">{value}</div>
     </div>
   );
 }
@@ -93,16 +93,16 @@ function SourceCard({ source, index }: { source: ChunkResult; index: number }) {
   const scorePct = Math.min(100, Math.max(0, source.score * 100));
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-3 transition-colors hover:border-white/20">
+    <div className="rounded-lg border border-soft bg-surface-1 p-3 transition-colors hover:border-base">
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="secondary" className="bg-white/10 font-mono text-[10px] text-white/60">
+          <Badge variant="secondary" className="bg-surface-2 font-mono text-[10px] text-muted-fg">
             #{index + 1}
           </Badge>
-          <Badge variant="outline" className="max-w-[180px] truncate border-white/20 text-xs text-white/80">
+          <Badge variant="outline" className="max-w-[180px] truncate border-base text-xs text-base-fg">
             {source.doc_name}
           </Badge>
-          <Badge variant="outline" className="border-white/20 text-[10px] text-white/60">
+          <Badge variant="outline" className="border-base text-[10px] text-muted-fg">
             p.{source.page_number}
           </Badge>
         </div>
@@ -115,26 +115,26 @@ function SourceCard({ source, index }: { source: ChunkResult; index: number }) {
           {methodLabel(source.retrieval_method)}
         </Badge>
         <div className="ml-auto flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-white/50">
+          <span className="font-mono text-[10px] text-faint">
             {source.score.toFixed(3)}
           </span>
         </div>
       </div>
-      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/5">
+      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-3">
         <div
           className="h-full rounded-full bg-gradient-to-r from-violet-500 to-sky-500"
           style={{ width: `${scorePct}%` }}
         />
       </div>
-      <Separator className="my-2.5 bg-white/10" />
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/75">
+      <Separator className="my-2.5 bg-base" />
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-base-fg">
         {expanded ? source.text : truncated}
       </p>
       {source.text.length > 180 ? (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-2 inline-flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white/90"
+          className="mt-2 inline-flex items-center gap-1 text-xs text-faint transition-colors hover:text-strong"
         >
           {expanded ? (
             <>
