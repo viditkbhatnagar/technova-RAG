@@ -17,6 +17,9 @@ interface ChatInterfaceProps {
   disabledReason?: string;
   onSourcesChange?: (sources: ChunkResult[], stats?: Record<string, unknown>) => void;
   resetKey?: string;
+  sessionId?: string | null;
+  initialMessages?: ChatMessage[];
+  onSessionIdChange?: (id: string) => void;
 }
 
 export function ChatInterface({
@@ -26,15 +29,23 @@ export function ChatInterface({
   disabledReason,
   onSourcesChange,
   resetKey,
+  sessionId,
+  initialMessages,
+  onSessionIdChange,
 }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages || []);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const activeSessionRef = useRef<string | null>(sessionId || null);
 
   useEffect(() => {
-    setMessages([]);
+    activeSessionRef.current = sessionId || null;
+  }, [sessionId]);
+
+  useEffect(() => {
+    setMessages(initialMessages || []);
     setError(null);
     onSourcesChange?.([], undefined);
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -65,7 +76,12 @@ export function ChatInterface({
         query: trimmed,
         mode,
         role: role || undefined,
+        session_id: activeSessionRef.current || undefined,
       });
+      if (response.session_id && response.session_id !== activeSessionRef.current) {
+        activeSessionRef.current = response.session_id;
+        onSessionIdChange?.(response.session_id);
+      }
       const asst: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",

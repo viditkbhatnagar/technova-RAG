@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     docs_path: str = "docs/"
     bm25_index_path: str = "backend/bm25_index.pkl"
     graph_data_path: str = "backend/graph_data.json"
+    database_url: str = ""
 
     @property
     def docs_dir(self) -> Path:

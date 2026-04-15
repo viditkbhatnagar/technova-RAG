@@ -1,6 +1,8 @@
 """Pydantic request/response schemas for the TechNova RAG API."""
 
+from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +36,7 @@ class QueryRequest(BaseModel):
     mode: Literal["open", "secure"] = "open"
     role: Literal["employee", "manager", "admin"] | None = None
     top_k: int = 5
+    session_id: UUID | None = None
 
 
 class ChunkResult(BaseModel):
@@ -53,6 +56,34 @@ class QueryResponse(BaseModel):
     retrieval_stats: dict[str, Any]
     access_denied: bool = False
     access_denied_message: str | None = None
+    session_id: UUID | None = None
+
+
+# ---------- /api/sessions ----------
+
+class SessionSummary(BaseModel):
+    id: UUID
+    mode: str
+    role: str | None = None
+    title: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+
+
+class StoredMessage(BaseModel):
+    id: UUID
+    role: str
+    content: str
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_stats: dict[str, Any] = Field(default_factory=dict)
+    access_denied: bool = False
+    access_denied_message: str | None = None
+    created_at: datetime
+
+
+class SessionDetail(SessionSummary):
+    messages: list[StoredMessage] = Field(default_factory=list)
 
 
 # ---------- /api/status ----------

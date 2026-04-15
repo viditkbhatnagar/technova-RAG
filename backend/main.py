@@ -9,8 +9,10 @@ from backend.config import settings
 from backend.routers import graph as graph_router
 from backend.routers import ingest as ingest_router
 from backend.routers import query as query_router
+from backend.routers import sessions as sessions_router
 from backend.routers import status as status_router
 from backend.services.bm25_index import BM25Index
+from backend.services.db import chat_store
 from backend.services.embedder import EmbeddingService
 from backend.services.retriever import HybridRetriever
 from backend.services.store import QdrantStore
@@ -71,6 +73,9 @@ async def lifespan(app: FastAPI):
     else:
         print("[startup] no persisted graph found — build via /api/ingest")
 
+    print("[startup] connecting to Postgres (chat history)...")
+    await chat_store.init(settings.database_url)
+
     print("[startup] ready.")
 
     yield
@@ -80,6 +85,8 @@ async def lifespan(app: FastAPI):
         store.client.close()
     except Exception:
         pass
+    print("[shutdown] closing Postgres pool")
+    await chat_store.close()
 
 
 app = FastAPI(
@@ -101,6 +108,7 @@ app.include_router(ingest_router.router)
 app.include_router(query_router.router)
 app.include_router(status_router.router)
 app.include_router(graph_router.router)
+app.include_router(sessions_router.router)
 
 
 @app.get("/")

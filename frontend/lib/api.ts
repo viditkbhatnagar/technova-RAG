@@ -8,6 +8,7 @@ export interface QueryRequest {
   mode: Mode;
   role?: Role;
   top_k?: number;
+  session_id?: string;
 }
 
 export interface ChunkResult {
@@ -42,6 +43,32 @@ export interface QueryResponse {
   retrieval_stats: RetrievalStats;
   access_denied: boolean;
   access_denied_message: string | null;
+  session_id: string | null;
+}
+
+export interface SessionSummary {
+  id: string;
+  mode: Mode;
+  role: Role | null;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface StoredMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: ChunkResult[];
+  retrieval_stats: RetrievalStats;
+  access_denied: boolean;
+  access_denied_message: string | null;
+  created_at: string;
+}
+
+export interface SessionDetail extends SessionSummary {
+  messages: StoredMessage[];
 }
 
 export interface GraphNode {
@@ -111,4 +138,24 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
 export async function triggerIngest(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_URL}/api/ingest`, { method: "POST" });
   return res.json();
+}
+
+export async function listSessions(mode?: Mode, limit = 50): Promise<SessionSummary[]> {
+  const params = new URLSearchParams();
+  if (mode) params.set("mode", mode);
+  params.set("limit", String(limit));
+  const res = await fetch(`${API_URL}/api/sessions?${params.toString()}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function getSession(sessionId: string): Promise<SessionDetail | null> {
+  const res = await fetch(`${API_URL}/api/sessions/${sessionId}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: "DELETE" });
+  return res.ok;
 }

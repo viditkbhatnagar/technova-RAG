@@ -1,8 +1,11 @@
 """POST /api/query — hybrid retrieval + (optional) security + generation."""
 
+import uuid
+
 from fastapi import APIRouter, HTTPException, Request
 
 from backend.models import ChunkResult, QueryRequest, QueryResponse
+from backend.services.db import chat_store
 from backend.services.generator import assemble_prompt, generate_answer
 from backend.services.security import self_correcting_retrieve
 
@@ -79,29 +82,58 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
         access_denied = False
         access_denied_message = None
 
+    session_id = req.session_id or uuid.uuid4()
+
     if access_denied:
         answer = (
             "I don't have access to that information at your current clearance level. "
             + (access_denied_message or "")
         )
+        answer = answer.strip()
+        chat_store.schedule_save(
+            session_id=session_id,
+            mode=req.mode,
+            role=req.role,
+            user_query=req.query,
+            assistant_answer=answer,
+            sources=[],
+            retrieval_stats=stats,
+            access_denied=True,
+            access_denied_message=access_denied_message,
+        )
         return QueryResponse(
-            answer=answer.strip(),
+            answer=answer,
             sources=[],
             prompt_assembled="",
             retrieval_stats=stats,
             access_denied=True,
             access_denied_message=access_denied_message,
+            session_id=session_id,
         )
 
     answer, prompt = await generate_answer(req.query, chunks)
     if not prompt:
         prompt = assemble_prompt(req.query, chunks)
 
+    source_results = [_to_chunk_result(c) for c in chunks]
+    chat_store.schedule_save(
+        session_id=session_id,
+        mode=req.mode,
+        role=req.role,
+        user_query=req.query,
+        assistant_answer=answer,
+        sources=[s.model_dump() for s in source_results],
+        retrieval_stats=stats,
+        access_denied=False,
+        access_denied_message=None,
+    )
+
     return QueryResponse(
         answer=answer,
-        sources=[_to_chunk_result(c) for c in chunks],
+        sources=source_results,
         prompt_assembled=prompt,
         retrieval_stats=stats,
         access_denied=False,
         access_denied_message=None,
+        session_id=session_id,
     )
