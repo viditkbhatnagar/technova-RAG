@@ -106,6 +106,13 @@ def ingest(req: IngestRequest, request: Request) -> IngestResponse:
             use_llm=bool(settings.openai_api_key),
         )
         request.app.state.graph_data = graph_data
+        try:
+            import json
+            graph_file = settings.graph_data_file
+            graph_file.parent.mkdir(parents=True, exist_ok=True)
+            graph_file.write_text(json.dumps(graph_data))
+        except Exception as exc:
+            print(f"[ingest] warning: failed to persist graph: {exc}")
         print(
             f"[ingest] graph built: "
             f"{graph_data['stats']['total_documents']} docs, "

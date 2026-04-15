@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     docs_path: str = "docs/"
     bm25_index_path: str = "backend/bm25_index.pkl"
+    graph_data_path: str = "backend/graph_data.json"
 
     @property
     def docs_dir(self) -> Path:
@@ -38,6 +39,11 @@ class Settings(BaseSettings):
     @property
     def bm25_index_file(self) -> Path:
         path = Path(self.bm25_index_path)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @property
+    def graph_data_file(self) -> Path:
+        path = Path(self.graph_data_path)
         return path if path.is_absolute() else PROJECT_ROOT / path
 
 

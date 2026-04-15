@@ -51,7 +51,26 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.bm25 = bm25
     app.state.retriever = retriever
+
     app.state.graph_data = None
+    graph_file = settings.graph_data_file
+    if graph_file.exists():
+        try:
+            import json
+            app.state.graph_data = json.loads(graph_file.read_text())
+            stats = app.state.graph_data.get("stats", {})
+            print(
+                f"[startup] graph loaded: "
+                f"{stats.get('total_documents', 0)} docs, "
+                f"{stats.get('total_chunks', 0)} chunks, "
+                f"{stats.get('total_entities', 0)} entities, "
+                f"{stats.get('total_relationships', 0)} relationships"
+            )
+        except Exception as exc:
+            print(f"[startup] graph load failed: {exc}")
+    else:
+        print("[startup] no persisted graph found — build via /api/ingest")
+
     print("[startup] ready.")
 
     yield

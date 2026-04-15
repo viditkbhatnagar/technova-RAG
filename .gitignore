@@ -39,6 +39,7 @@ build/
 qdrant_storage/
 qdrant_data/
 bm25_index.pkl
+graph_data.json
 *.pkl
 *.pickle
 
