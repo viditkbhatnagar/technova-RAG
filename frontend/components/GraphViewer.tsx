@@ -1,0 +1,269 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { X, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { fetchGraph, type GraphData, type GraphEdge, type GraphNode } from "@/lib/api";
+import { ENTITY_COLORS, SECURITY_COLORS } from "@/lib/types";
+
+const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), { ssr: false });
+
+interface ForceNode extends GraphNode {
+  val?: number;
+  color?: string;
+}
+
+interface ForceLink extends GraphEdge {
+  color?: string;
+}
+
+function nodeColor(node: GraphNode): string {
+  if (node.type === "document") {
+    const lvl = typeof node.security_level === "number" ? node.security_level : 1;
+    return SECURITY_COLORS[lvl]?.hex ?? "#3b82f6";
+  }
+  if (node.type === "chunk") return "#94a3b8";
+  if (node.type === "entity") {
+    const et = (node.entity_type || "DEFAULT").toUpperCase();
+    return ENTITY_COLORS[et] ?? ENTITY_COLORS.DEFAULT;
+  }
+  return "#94a3b8";
+}
+
+function nodeSize(node: GraphNode): number {
+  if (node.type === "document") return 15;
+  if (node.type === "entity") return 8;
+  return 5;
+}
+
+function edgeColor(type: string): string {
+  if (type === "contains") return "rgba(255,255,255,0.08)";
+  if (type === "mentions") return "rgba(148,163,184,0.25)";
+  return "rgba(167,139,250,0.45)";
+}
+
+export function GraphViewer() {
+  const [data, setData] = useState<GraphData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [dims, setDims] = useState({ width: 0, height: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGraph()
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load graph");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setDims({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const graphData = useMemo(() => {
+    if (!data) return { nodes: [] as ForceNode[], links: [] as ForceLink[] };
+    const nodes: ForceNode[] = data.nodes.map((n) => ({
+      ...n,
+      val: nodeSize(n),
+      color: nodeColor(n),
+    }));
+    const links: ForceLink[] = data.edges.map((e) => ({
+      ...e,
+      color: edgeColor(e.type),
+    }));
+    return { nodes, links };
+  }, [data]);
+
+  return (
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-black">
+      {!data && !error ? (
+        <div className="absolute inset-0 flex items-center justify-center text-white/60">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Loading knowledge graph…</span>
+          </div>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+            {error}
+          </div>
+        </div>
+      ) : null}
+      {data && dims.width > 0 ? (
+        <ForceGraph3D
+          graphData={graphData}
+          width={dims.width}
+          height={dims.height}
+          backgroundColor="#000000"
+          nodeLabel={((n: unknown) => {
+            const node = n as ForceNode;
+            return `${node.label} (${node.type})`;
+          }) as never}
+          nodeColor={((n: unknown) => (n as ForceNode).color || "#94a3b8") as never}
+          nodeVal={((n: unknown) => (n as ForceNode).val || 5) as never}
+          nodeOpacity={0.95}
+          linkColor={((l: unknown) => (l as ForceLink).color || "rgba(255,255,255,0.1)") as never}
+          linkOpacity={0.6}
+          linkWidth={((l: unknown) => ((l as ForceLink).type === "relationship" ? 1.2 : 0.4)) as never}
+          linkDirectionalParticles={0}
+          enableNodeDrag={false}
+          onNodeClick={((n: unknown) => setSelected(n as ForceNode)) as never}
+        />
+      ) : null}
+      {selected ? <InfoPanel node={selected} onClose={() => setSelected(null)} /> : null}
+      {data ? <StatsBar data={data} /> : null}
+      {data ? <Legend /> : null}
+    </div>
+  );
+}
+
+function InfoPanel({ node, onClose }: { node: GraphNode; onClose: () => void }) {
+  const sec =
+    typeof node.security_level === "number" ? SECURITY_COLORS[node.security_level] : null;
+  return (
+    <div className="absolute right-4 top-4 w-80 overflow-hidden rounded-xl border border-white/15 bg-black/80 text-white shadow-2xl backdrop-blur-md">
+      <div className="flex items-start justify-between gap-2 border-b border-white/10 p-4">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-white/40">{node.type}</div>
+          <div className="mt-0.5 truncate text-base font-semibold">{node.label}</div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="space-y-3 p-4 text-sm">
+        {sec ? (
+          <Row label="Security">
+            <Badge className={`${sec.bg} ${sec.text} ${sec.border} border text-[10px] font-semibold`}>
+              {sec.label}
+            </Badge>
+          </Row>
+        ) : null}
+        {node.domain ? <Row label="Domain">{String(node.domain)}</Row> : null}
+        {node.entity_type ? <Row label="Entity Type">{String(node.entity_type)}</Row> : null}
+        {typeof node.mentions === "number" ? (
+          <Row label="Mentions">{node.mentions}</Row>
+        ) : null}
+        {typeof node.page_number === "number" ? (
+          <Row label="Page">{node.page_number}</Row>
+        ) : null}
+        {node.parent_doc ? (
+          <Row label="Parent Doc">
+            <span className="truncate text-white/70">{String(node.parent_doc)}</span>
+          </Row>
+        ) : null}
+        {node.text_preview ? (
+          <>
+            <Separator className="bg-white/10" />
+            <div className="text-xs text-white/60">Preview</div>
+            <p className="text-xs leading-relaxed text-white/80">{String(node.text_preview)}</p>
+          </>
+        ) : null}
+        {node.metadata && typeof node.metadata === "object" ? (
+          <>
+            <Separator className="bg-white/10" />
+            <div className="space-y-1 text-xs text-white/70">
+              {Object.entries(node.metadata as Record<string, unknown>).map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-2">
+                  <span className="text-white/40">{k}</span>
+                  <span className="truncate">{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs uppercase tracking-wider text-white/40">{label}</span>
+      <span className="text-sm">{children}</span>
+    </div>
+  );
+}
+
+function StatsBar({ data }: { data: GraphData }) {
+  const s = data.stats;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
+      <div className="pointer-events-auto flex gap-6 rounded-full border border-white/10 bg-black/60 px-6 py-2 text-xs text-white/70 backdrop-blur-md">
+        <Stat label="Documents" value={s.total_documents} />
+        <Stat label="Chunks" value={s.total_chunks} />
+        <Stat label="Entities" value={s.total_entities} />
+        <Stat label="Relationships" value={s.total_relationships} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="uppercase tracking-wider text-white/40">{label}</span>
+      <span className="font-mono font-semibold text-white">{value}</span>
+    </div>
+  );
+}
+
+function Legend() {
+  return (
+    <div className="absolute left-4 top-4 space-y-2 rounded-xl border border-white/10 bg-black/60 p-3 text-xs text-white/70 backdrop-blur-md">
+      <div className="font-semibold uppercase tracking-wider text-white/50">Nodes</div>
+      <div className="space-y-1">
+        {[0, 1, 2, 3].map((lvl) => {
+          const s = SECURITY_COLORS[lvl];
+          return (
+            <div key={lvl} className="flex items-center gap-2">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: s.hex }}
+              />
+              <span>Doc · {s.label}</span>
+            </div>
+          );
+        })}
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />
+          <span>Chunk</span>
+        </div>
+        {[
+          ["PERSON", ENTITY_COLORS.PERSON],
+          ["POLICY", ENTITY_COLORS.POLICY],
+          ["AMOUNT", ENTITY_COLORS.AMOUNT],
+          ["DATE", ENTITY_COLORS.DATE],
+          ["ORG", ENTITY_COLORS.ORG],
+        ].map(([label, hex]) => (
+          <div key={label} className="flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: hex }} />
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
