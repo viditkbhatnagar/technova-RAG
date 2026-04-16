@@ -92,15 +92,18 @@ export function ChatSidebar({
             {sessions.map((s) => {
               const active = s.id === activeSessionId;
               return (
-                <li key={s.id}>
+                <li
+                  key={s.id}
+                  className={`group relative flex items-start gap-2 rounded-md text-sm transition-colors ${
+                    active
+                      ? "bg-violet-500/15 text-strong"
+                      : "text-base-fg hover:bg-surface-1"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => onSelect(s.id)}
-                    className={`group flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
-                      active
-                        ? "bg-violet-500/15 text-strong"
-                        : "text-base-fg hover:bg-surface-1"
-                    }`}
+                    className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2.5 py-2 pr-8 text-left"
                   >
                     <MessageSquarePlus
                       className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
@@ -121,14 +124,14 @@ export function ChatSidebar({
                         <span>· {s.message_count} msg</span>
                       </span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={(e) => handleDelete(e, s.id)}
-                      className="invisible mt-0.5 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-red-500 dark:hover:text-red-300 group-hover:visible"
-                      aria-label="Delete conversation"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDelete(e, s.id)}
+                    className="invisible absolute right-1.5 top-1.5 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-red-500 dark:hover:text-red-300 group-hover:visible"
+                    aria-label="Delete conversation"
+                  >
+                    <Trash2 className="h-3 w-3" />
                   </button>
                 </li>
               );
