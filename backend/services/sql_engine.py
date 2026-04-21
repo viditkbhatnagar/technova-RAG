@@ -23,7 +23,8 @@ import sqlglot
 from sqlglot import exp
 from openai import AsyncOpenAI, OpenAIError
 
-from backend.config import ROLE_CLEARANCE, TABLE_HINTS, settings
+from backend.config import ROLE_CLEARANCE, settings
+from backend.services.schema_glossary import load_glossary
 from backend.services.structured_ingest import load_schema_registry
 
 
@@ -31,59 +32,87 @@ class SQLValidationError(Exception):
     pass
 
 
-_SYSTEM_PROMPT = """You are a SQL analyst for TechNova Inc. You write a SINGLE SQLite SELECT query to answer the user's question using ONLY the tables and columns in SCHEMA below.
+_SYSTEM_PROMPT = """You are a SQL analyst for TechNova Inc. Write a single SQLite SELECT query.
 
 OUTPUT:
-- Output ONLY the SQL query. No prose, no markdown fences, no comments.
-- Use SELECT only. Never INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ATTACH/PRAGMA.
-- Only reference tables and columns listed in SCHEMA. Do not invent columns or values.
-- Always include a LIMIT clause (<= {row_limit}). Default LIMIT {row_limit}.
+- Output only the SQL. No prose, no markdown fences.
+- SELECT only. No INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ATTACH/PRAGMA.
+- Only reference tables and columns listed in SCHEMA. Never invent columns or literal values.
+- Always include LIMIT (<= {row_limit}).
 
-CRITICAL RULES for correctness:
+PRINCIPLES (use these to REASON, do not memorize):
 
-1) ADJECTIVE → WHERE FILTER. Every adjective, category, or scope word in the question must become a WHERE filter. Examples:
-   - "critical services"        -> WHERE criticality_tier = 'Critical'
-   - "flagged vendors"          -> WHERE risk_status IN ('Conditional','Suspended')
-   - "active employees"         -> WHERE employment_status = 'Active'
-   - "overdue training"         -> WHERE status = 'Overdue'
-   - "training gap" / "behind"  -> WHERE status != 'Completed'
-   - "SEV-1 or SEV-2 incidents" -> WHERE severity IN ('SEV-1','SEV-2')
-   - "this fiscal year"         -> date range or period_quarter LIKE '%FY2025-26'
-   See the per-table HINTS in SCHEMA for the canonical mapping.
+1. SOURCE OF TRUTH. When multiple tables could contain a concept, pick the most specific one. Use the column samples and per-column profile (distinct counts, top values, null rate, min/max) to choose. If table A has a dedicated column for the concept (e.g. `asset_type` values) and table B only has a generic `amount`, A is the source of truth.
 
-2) ENUM VALUES ARE FIXED. A column shown as `values: [...]` has ONLY those values — never invent new ones (no 'Flagged', no 'Failed', no 'Pending' unless listed).
+2. MAP EVERY SIGNIFICANT WORD TO A COLUMN. For each noun, adjective, scope word, and filter phrase in the question, find the column whose samples/values/name best match it. If nothing matches cleanly, the concept likely isn't in the data — do NOT substitute a loosely related column.
 
-3) GRAIN = ENTITY IN QUESTION. If the user asks for a list of entity X (services, customers, vendors, incidents…), the SELECT must be at the grain of X — not X × employees × licenses. When you JOIN through intermediate tables, use DISTINCT or GROUP BY on the entity's primary key to dedupe. Never return repeated rows of the same entity.
+3. GRAIN = ENTITY IN THE QUESTION. If the user asks for a list of X, the SELECT grain is X. When joining through intermediaries, dedupe with DISTINCT on X's PK or GROUP BY X's columns. Never let joins through many-to-many tables explode rows.
 
-4) "X WITH Y" needs EXISTS / aggregation, not naive JOIN. For questions like "services whose owning team has a flagged vendor", prefer one of:
-   - SELECT ... FROM X JOIN Y ... WHERE ... GROUP BY X.pk  (and aggregate Y with GROUP_CONCAT / COUNT)
-   - SELECT ... FROM X WHERE EXISTS (SELECT 1 FROM Y WHERE ...)
-   Do NOT explode X by joining through per-employee tables unless the question is per-employee.
+4. "X WITH Y" PATTERN. Prefer `EXISTS` or `GROUP BY X.pk + HAVING ...` over naive joins. Pick join paths that match the real semantic relationship, not the shortest FK chain.
 
-5) JOIN via FOREIGN KEYS shown in SCHEMA. For service→vendor relationships go via shared owner_department_id, NOT via assets_licenses (which is employee hardware).
+5. FUZZY NEGATIVES MEAN "INSUFFICIENT", NOT "ABSOLUTE ZERO". Phrases like "hasn't bothered with certifications", "behind on training", "lacking X", "missing Y" mean the person has at least one gap — not that they have zero of anything. Use the POSITIVE inclusive form: `EXISTS (... status IN ('Overdue','In Progress'))`. Do NOT use `NOT EXISTS (... status='Completed')` — that excludes everyone who has ever completed anything, which is virtually everyone.
 
-6) DATES are TEXT in 'YYYY-MM-DD'. Use BETWEEN '2026-01-01' AND '2026-12-31' for year ranges.
+6. ENUM MATCHING — LITERAL OVER LOOSE.
+   a) EXACT MATCH FIRST. If the user's word case-insensitively matches one enum value exactly (e.g. user says "critical" and criticality_tier has value 'Critical'), filter to THAT value only — do not expand to related values. 'critical services' = `criticality_tier = 'Critical'`, not `IN ('Critical','High')`.
+   b) INCLUSIVE ONLY FOR SYNONYMS. Only expand to multiple values when the user's word is a synonym or category that no single enum captures. e.g. "active" with values ['Active','In Use'] → both (both mean in-use). "serious incidents" with severity ['SEV-1','SEV-2','SEV-3','SEV-4'] → SEV-1 + SEV-2 (severity ladder, "serious" ≠ "Critical").
+   c) When in doubt, prefer the narrower literal match — users expect precision.
+
+7. CONSULT NULL RATES. A column profile with `null_rate` near 100% (especially ⚠ALWAYS-NULL) means that column cannot be JOIN-ed on. If revenue rows have customer_id always null, you cannot derive per-customer revenue — aggregate by whatever column IS populated (e.g. `region`, `department_id`).
+
+8. ENUMS ARE CLOSED. Top values are the only valid values. Never invent (no 'Flagged', no 'Pending', no 'Failed' unless listed).
+
+9. DO NOT OVER-FILTER. Do not add filters the user did not request. If the user says "engineers who did X", do not also filter by `department_id=Engineering` unless that's explicitly asked — "engineers" can be colloquial for "technical staff".
+
+10. DATES are TEXT 'YYYY-MM-DD'. Compare with BETWEEN string ranges.
+
+11. CONCEPTS NOT IN THE SCHEMA. If the user asks for something (e.g. "on-call pay", "retention bonus amount") and no column tracks it, DO NOT substitute a loosely related column. Leave that part out of the SQL; the narrative answer will flag it.
 """
 
 
-_CRITIQUE_PROMPT = """You review SQL drafts for a corporate analyst.
+_PLAN_PROMPT = """You are a SQL analyst planning a query against the TechNova database before writing it.
 
-The user asked: {question}
+Question: {question}
 
-The draft SQL is:
-{sql}
-
-Available schema:
+Available schema (with per-column profile — top values, null rates, ranges):
 {schema}
 
-Check the draft against these rules:
-(a) Does every adjective / category / scope word from the question become a WHERE filter? (e.g. "critical" -> criticality_tier='Critical', "flagged" -> risk_status IN ('Conditional','Suspended'), "overdue" -> status='Overdue').
-(b) Does the SELECT grain match the entity the user asked about? If the question says "show me X" and the SQL joins through other tables, it needs DISTINCT on X's PK or GROUP BY on X's columns — otherwise rows will be duplicated.
-(c) Are all enum values used in WHERE actually listed in the schema's `values: [...]` for that column? Invented values = 0 rows.
-(d) For "X with any Y" patterns, prefer EXISTS or GROUP BY on X over a naive join that explodes rows.
+Produce a SHORT structured plan. For each concept/adjective/noun in the question, identify:
+- which table.column is the source of truth for it
+- what filter expression it becomes
+- any schema gotchas (e.g. column is mostly NULL, concept not in data)
 
-If the draft is correct on all four, output the draft SQL unchanged.
-Otherwise, output a corrected SQL query. Output SQL ONLY, no prose.
+Also state:
+- the SELECT grain (entity the user asked for)
+- the join path, and whether DISTINCT / GROUP BY is needed
+- any concept from the question that is NOT representable in the schema
+
+Output as a numbered list, max 12 lines. Be precise — name exact tables/columns.
+Do NOT write the SQL. Only the plan.
+"""
+
+
+_CRITIQUE_PROMPT = """You review SQL drafts against the user's question and the schema.
+
+Question: {question}
+
+Draft SQL:
+{sql}
+
+Schema:
+{schema}
+
+Check (each is a frequent silent-wrong-answer bug):
+(a) Source-of-truth: for each concept, does the SQL use the MOST specific column? ('laptop spend' belongs in assets_licenses with asset_type='Laptop' + annual_cost, NOT financial_transactions.)
+(b) Grain: does SELECT grain match the entity the user asked for? DISTINCT/GROUP BY needed?
+(c) Enum INCLUSIVITY: did the SQL include ALL enum values that match the concept? If status has ['Active','In Use'] and question says "active", BOTH should be in WHERE. If severity has SEV-1/2/3/4 and question says "serious", at minimum SEV-1 AND SEV-2.
+(d) Enum existence: every literal value in WHERE must appear in the column's top_values. No invented values.
+(e) Null-rate trap: any JOIN on a column with null_rate≥99% (ALWAYS-NULL)? That join produces 0 rows — switch the aggregation to a populated column (region, department_id) or drop the join.
+(f) Fuzzy negatives: "hasn't bothered", "behind on", "lacking" should become EXISTS on the negative values (Overdue, In Progress), NOT `NOT EXISTS` on Completed — the latter excludes essentially everyone.
+(g) Over-filtering: did the SQL add filters (department, role, status) that the user did not state? Remove them.
+(h) Unrepresentable concepts: if the question asks for X and no column tracks X, the SQL should leave it OUT (don't invent a proxy). The narrative answer will state it's unavailable.
+
+If the draft is correct on all checks, output it unchanged.
+Otherwise, output a corrected SQL. SQL only, no prose.
 """
 
 
@@ -95,11 +124,13 @@ class SQLEngine:
     ):
         self.sqlite_path = Path(sqlite_path or settings.sqlite_db_file)
         self.registry = registry or load_schema_registry() or {"tables": []}
+        self.glossary = load_glossary()
         self.row_limit = settings.sql_row_limit
         self.statement_timeout_ms = settings.sql_statement_timeout_ms
 
     def reload(self) -> None:
         self.registry = load_schema_registry() or {"tables": []}
+        self.glossary = load_glossary()
 
     def is_ready(self) -> bool:
         return self.sqlite_path.exists() and bool(self.registry.get("tables"))
@@ -130,36 +161,19 @@ class SQLEngine:
         parts: list[str] = []
         for t in tables:
             col_lines = []
+            table_gloss = (self.glossary or {}).get(t["name"], {})
             for c in t["columns"]:
-                distinct_count = c.get("distinct_count")
-                distinct = c.get("distinct_preview") or []
-                is_enum = (
-                    c.get("sqlite_type") == "TEXT"
-                    and distinct_count is not None
-                    and distinct_count <= 10
-                    and distinct
-                )
-                if is_enum:
-                    vals = ", ".join(repr(v) for v in distinct[:distinct_count])
-                    val_str = f"  values: [{vals}]"
-                else:
-                    sample = c.get("sample_value")
-                    val_str = f"  e.g. {sample!r}" if sample is not None else ""
-                col_lines.append(f"    - {c['name']} {c['sqlite_type']}{val_str}")
+                gloss = table_gloss.get(c["name"], {})
+                col_lines.append("    - " + _format_column(c, gloss))
             fk_lines = []
             for fk in t.get("foreign_keys", []):
                 fk_lines.append(f"    FK: {fk['column']} -> {fk['references']}")
-
-            hint_lines = []
-            for h in TABLE_HINTS.get(t["name"], []):
-                hint_lines.append(f"    HINT: {h}")
 
             parts.append(
                 f"TABLE {t['name']}  ({t['row_count']} rows, PK={t['primary_key']})\n"
                 f"  -- {t['description']}\n"
                 + "\n".join(col_lines)
                 + ("\n" + "\n".join(fk_lines) if fk_lines else "")
-                + ("\n" + "\n".join(hint_lines) if hint_lines else "")
             )
 
         examples = self.registry.get("example_queries", [])[:4]
@@ -262,14 +276,47 @@ class SQLEngine:
 
     # ---------- llm ----------
 
-    async def generate_sql(self, question: str, role: str | None) -> str:
+    async def plan_query(self, question: str, role: str | None) -> str:
+        """First LLM pass: reason about which tables/columns answer the question
+        and what schema gotchas apply. Output is a short plan that gets fed to
+        generate_sql. No SQL yet.
+        """
+        if not settings.openai_api_key:
+            return ""
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        prompt = _PLAN_PROMPT.format(
+            question=question,
+            schema=self.schema_prompt(role),
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": "You are a careful SQL analyst. Output a plan, not SQL."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=400,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except OpenAIError:
+            return ""
+
+    async def generate_sql(
+        self, question: str, role: str | None, plan: str = ""
+    ) -> str:
         if not settings.openai_api_key:
             raise SQLValidationError(
                 "SQL generation requires OPENAI_API_KEY to be configured."
             )
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         system = _SYSTEM_PROMPT.format(row_limit=self.row_limit)
-        user = f"{self.schema_prompt(role)}\n\nQUESTION: {question}\n\nSQL:"
+        plan_block = f"\n\nPLAN (follow this):\n{plan}" if plan else ""
+        user = (
+            f"{self.schema_prompt(role)}"
+            f"{plan_block}"
+            f"\n\nQUESTION: {question}\n\nSQL:"
+        )
         resp = await client.chat.completions.create(
             model=settings.llm_model,
             messages=[
@@ -277,7 +324,7 @@ class SQLEngine:
                 {"role": "user", "content": user},
             ],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=900,
         )
         text = (resp.choices[0].message.content or "").strip()
         return _strip_code_fence(text)
@@ -333,7 +380,7 @@ class SQLEngine:
                 {"role": "user", "content": user},
             ],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=900,
         )
         return _strip_code_fence((resp.choices[0].message.content or "").strip())
 
@@ -351,15 +398,24 @@ class SQLEngine:
         attempts: list[dict] = []
         t0 = time.perf_counter()
 
+        # Plan step: the LLM first reasons about which tables/columns to use
+        # and flags schema gotchas (null-rate traps, concepts not in data,
+        # source-of-truth disambiguation). The plan is fed into generate_sql.
+        plan = ""
         try:
-            draft = await self.generate_sql(question, role)
+            plan = await self.plan_query(question, role)
+        except Exception as exc:
+            print(f"[sql_engine] plan step failed (continuing): {exc}")
+
+        try:
+            draft = await self.generate_sql(question, role, plan=plan)
         except OpenAIError as exc:
             return {"ok": False, "error": f"LLM error: {exc}", "attempts": []}
         except SQLValidationError as exc:
             return {"ok": False, "error": str(exc), "attempts": []}
 
         # Critique pass: catches missing filters, M:N explosions, invented
-        # enum values. One extra LLM call — worth it for correctness.
+        # enum values, null-rate traps that the plan missed.
         try:
             draft = await self.critique_sql(question, role, draft)
         except Exception as exc:
@@ -423,6 +479,59 @@ class SQLEngine:
             "total_elapsed_ms": total_ms,
             "attempts": attempts,
         }
+
+
+def _format_column(c: dict, gloss: dict | None = None) -> str:
+    """One line per column describing type, data shape, and statistics.
+    The LLM uses this to pick the right column for each concept in the question.
+    """
+    sqlite_type = c.get("sqlite_type", "TEXT")
+    name = c["name"]
+    pieces = [f"{name} {sqlite_type}"]
+    if gloss:
+        desc = gloss.get("description")
+        aliases = gloss.get("aliases") or []
+        if desc:
+            pieces.append(f"— {desc}")
+        if aliases:
+            pieces.append(f"phrases: [{', '.join(aliases[:4])}]")
+
+    null_rate = c.get("null_rate")
+    distinct_count = c.get("distinct_count")
+    top_values = c.get("top_values") or []
+
+    if sqlite_type == "TEXT":
+        if distinct_count is not None and 0 < distinct_count <= 12 and top_values:
+            # closed enum — list all values with frequencies
+            vals = [f"{tv['value']!r}×{tv['count']}" for tv in top_values[:distinct_count]]
+            pieces.append(f"values: [{', '.join(vals)}]")
+        elif top_values:
+            # open text — show top-3 + distinct count
+            sample_vals = [f"{tv['value']!r}×{tv['count']}" for tv in top_values[:3]]
+            pieces.append(
+                f"top: [{', '.join(sample_vals)}] of {distinct_count} distinct"
+            )
+        else:
+            sample = c.get("sample_value")
+            if sample is not None:
+                pieces.append(f"e.g. {sample!r}")
+    elif sqlite_type in ("INTEGER", "REAL"):
+        mn, mx, avg = c.get("min"), c.get("max"), c.get("mean")
+        if mn is not None and mx is not None:
+            pieces.append(f"range: [{mn} .. {mx}] mean={avg}")
+        elif c.get("sample_value") is not None:
+            pieces.append(f"e.g. {c['sample_value']!r}")
+    elif sqlite_type == "DATE":
+        mn, mx = c.get("min_date"), c.get("max_date")
+        if mn and mx:
+            pieces.append(f"range: [{mn} .. {mx}]")
+
+    if null_rate is not None and null_rate > 0:
+        pct = int(round(null_rate * 100))
+        flag = " ⚠ALWAYS-NULL" if null_rate >= 0.99 else ""
+        pieces.append(f"null_rate={pct}%{flag}")
+
+    return "  ".join(pieces)
 
 
 def _strip_code_fence(text: str) -> str:

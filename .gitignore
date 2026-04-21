@@ -46,6 +46,7 @@ graph_data.json
 # Structured-data ingest artifacts (rebuilt on /api/ingest)
 backend/structured.db
 backend/sql_schema_registry.json
+backend/schema_glossary.json
 
 # Next.js build
 .turbo/

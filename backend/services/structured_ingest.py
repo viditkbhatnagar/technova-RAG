@@ -47,11 +47,7 @@ def _looks_like_iso_date(v: str) -> bool:
     return head[:4].isdigit() and head[5:7].isdigit() and head[8:10].isdigit()
 
 
-def _sample_value(series: pd.Series) -> Any:
-    non_null = series.dropna()
-    if non_null.empty:
-        return None
-    val = non_null.iloc[0]
+def _coerce(val: Any) -> Any:
     if hasattr(val, "item"):
         try:
             val = val.item()
@@ -62,22 +58,59 @@ def _sample_value(series: pd.Series) -> Any:
     return val
 
 
+def _sample_value(series: pd.Series) -> Any:
+    non_null = series.dropna()
+    if non_null.empty:
+        return None
+    return _coerce(non_null.iloc[0])
+
+
 def _distinct_preview(series: pd.Series, limit: int = 8) -> list[Any]:
     non_null = series.dropna()
     if non_null.empty:
         return []
     uniq = non_null.drop_duplicates().head(limit).tolist()
-    cleaned: list[Any] = []
-    for v in uniq:
-        if hasattr(v, "item"):
-            try:
-                v = v.item()
-            except Exception:
-                pass
-        if isinstance(v, float) and v.is_integer():
-            v = int(v)
-        cleaned.append(v)
-    return cleaned
+    return [_coerce(v) for v in uniq]
+
+
+def _profile_column(series: pd.Series, sqlite_type: str) -> dict:
+    """Compute data-shape statistics the LLM needs to pick the right table/columns
+    and avoid schema gotchas (e.g. a column that is always NULL in practice)."""
+    total = int(len(series))
+    null_count = int(series.isna().sum())
+    null_rate = round(null_count / total, 3) if total else 0.0
+    non_null = series.dropna()
+    distinct_count = int(non_null.nunique())
+
+    profile: dict = {
+        "null_count": null_count,
+        "null_rate": null_rate,
+        "distinct_count": distinct_count,
+    }
+
+    if sqlite_type == "TEXT":
+        # top value counts — lets the LLM see both what values exist and
+        # how common they are
+        vc = non_null.astype(str).value_counts().head(20)
+        profile["top_values"] = [
+            {"value": _coerce(k), "count": int(v)} for k, v in vc.items()
+        ]
+    elif sqlite_type in ("INTEGER", "REAL"):
+        if not non_null.empty:
+            numeric = pd.to_numeric(non_null, errors="coerce").dropna()
+            if not numeric.empty:
+                profile["min"] = _coerce(numeric.min())
+                profile["max"] = _coerce(numeric.max())
+                profile["mean"] = round(float(numeric.mean()), 2)
+    elif sqlite_type == "DATE":
+        try:
+            as_str = non_null.astype(str)
+            profile["min_date"] = str(as_str.min())
+            profile["max_date"] = str(as_str.max())
+        except Exception:
+            pass
+
+    return profile
 
 
 class StructuredIngestionError(Exception):
@@ -133,16 +166,15 @@ def ingest_structured_corpus(
             columns_info: list[dict] = []
             for col in df.columns:
                 sqlite_type = _infer_sqlite_type(df[col])
-                distinct_count = int(df[col].dropna().nunique())
+                profile = _profile_column(df[col], sqlite_type)
                 columns_info.append(
                     {
                         "name": col,
                         "sqlite_type": sqlite_type,
                         "pandas_dtype": str(df[col].dtype),
                         "sample_value": _sample_value(df[col]),
-                        "distinct_count": distinct_count,
                         "distinct_preview": _distinct_preview(df[col], limit=12),
-                        "null_count": int(df[col].isna().sum()),
+                        **profile,
                     }
                 )
 

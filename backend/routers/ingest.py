@@ -16,9 +16,12 @@ from backend.services.chunker import chunk_document
 from backend.services.db import chat_store
 from backend.services.graph_builder import GraphBuilder
 from backend.services.loader import IngestionError, list_pdfs, load_pdf
+from backend.services.schema_docs import build_schema_docs
+from backend.services.schema_glossary import build_glossary, load_glossary
 from backend.services.structured_ingest import (
     StructuredIngestionError,
     ingest_structured_corpus,
+    load_schema_registry,
 )
 from backend.services.structured_rows import build_row_chunks
 
@@ -123,11 +126,32 @@ async def ingest(req: IngestRequest, request: Request) -> IngestResponse:
         print(f"[ingest] warning: row-level embedding build failed: {exc}")
         row_chunks = []
 
+    schema_chunks: list[dict] = []
+    try:
+        registry = load_schema_registry() or {"tables": []}
+        print("[ingest] building business glossary (LLM per column, cached)...")
+        glossary = await build_glossary(registry)
+        schema_chunks = build_schema_docs(registry, glossary)
+        if schema_chunks:
+            print(
+                f"[ingest] schema docs: {len(schema_chunks)} "
+                f"(columns + value docs across {len(registry.get('tables', []))} tables)"
+            )
+    except Exception as exc:
+        print(f"[ingest] warning: schema-doc build failed: {exc}")
+
     if row_chunks:
         texts = [c["text"] for c in row_chunks]
         embeddings = embedder.embed_texts(texts)
         store.upsert_chunks(row_chunks, embeddings)
         all_chunks.extend(row_chunks)
+
+    if schema_chunks:
+        texts = [c["text"] for c in schema_chunks]
+        embeddings = embedder.embed_texts(texts)
+        store.upsert_chunks(schema_chunks, embeddings)
+        all_chunks.extend(schema_chunks)
+        print(f"[ingest] embedded {len(schema_chunks)} schema docs")
 
         from collections import Counter
         per_table = Counter(c["table"] for c in row_chunks)
