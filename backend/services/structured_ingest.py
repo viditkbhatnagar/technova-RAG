@@ -133,13 +133,15 @@ def ingest_structured_corpus(
             columns_info: list[dict] = []
             for col in df.columns:
                 sqlite_type = _infer_sqlite_type(df[col])
+                distinct_count = int(df[col].dropna().nunique())
                 columns_info.append(
                     {
                         "name": col,
                         "sqlite_type": sqlite_type,
                         "pandas_dtype": str(df[col].dtype),
                         "sample_value": _sample_value(df[col]),
-                        "distinct_preview": _distinct_preview(df[col]),
+                        "distinct_count": distinct_count,
+                        "distinct_preview": _distinct_preview(df[col], limit=12),
                         "null_count": int(df[col].isna().sum()),
                     }
                 )

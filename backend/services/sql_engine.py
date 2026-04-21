@@ -90,9 +90,21 @@ class SQLEngine:
         for t in tables:
             col_lines = []
             for c in t["columns"]:
-                sample = c.get("sample_value")
-                sample_str = f"  e.g. {sample!r}" if sample is not None else ""
-                col_lines.append(f"    - {c['name']} {c['sqlite_type']}{sample_str}")
+                distinct_count = c.get("distinct_count")
+                distinct = c.get("distinct_preview") or []
+                is_enum = (
+                    c.get("sqlite_type") == "TEXT"
+                    and distinct_count is not None
+                    and distinct_count <= 10
+                    and distinct
+                )
+                if is_enum:
+                    vals = ", ".join(repr(v) for v in distinct[:distinct_count])
+                    val_str = f"  values: [{vals}]"
+                else:
+                    sample = c.get("sample_value")
+                    val_str = f"  e.g. {sample!r}" if sample is not None else ""
+                col_lines.append(f"    - {c['name']} {c['sqlite_type']}{val_str}")
             fk_lines = []
             for fk in t.get("foreign_keys", []):
                 fk_lines.append(f"    FK: {fk['column']} -> {fk['references']}")
