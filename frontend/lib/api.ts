@@ -36,6 +36,34 @@ export interface RetrievalStats {
   [key: string]: unknown;
 }
 
+export type QueryRoute = "sql" | "rag" | "hybrid";
+
+export interface RouteDecision {
+  route: QueryRoute;
+  confidence: string;
+  reason: string;
+  signals?: Record<string, unknown>;
+  heuristic_reason?: string | null;
+}
+
+export interface SqlAttempt {
+  sql: string;
+  error?: string | null;
+}
+
+export interface SqlResult {
+  ok: boolean;
+  sql?: string | null;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
+  elapsed_ms?: number | null;
+  total_elapsed_ms?: number | null;
+  error?: string | null;
+  attempts?: SqlAttempt[];
+}
+
 export interface QueryResponse {
   answer: string;
   sources: ChunkResult[];
@@ -44,6 +72,8 @@ export interface QueryResponse {
   access_denied: boolean;
   access_denied_message: string | null;
   session_id: string | null;
+  route?: RouteDecision | null;
+  sql_result?: SqlResult | null;
 }
 
 export interface SessionSummary {
@@ -294,6 +324,30 @@ export interface PipelineTrace {
   role: string | null;
   stages: {
     query: { text: string };
+    route?: {
+      route: QueryRoute;
+      confidence: string;
+      reason: string;
+      signals: Record<string, unknown>;
+      elapsed_ms: number;
+    };
+    sql_gen?: {
+      used: boolean;
+      route: QueryRoute | null;
+      elapsed_ms: number;
+      sql: string | null;
+      error: string | null;
+      attempts?: { sql: string; error: string | null }[];
+    };
+    sql_exec?: {
+      used: boolean;
+      elapsed_ms: number;
+      columns: string[];
+      rows: Record<string, unknown>[];
+      row_count: number;
+      truncated: boolean;
+      error: string | null;
+    };
     embed: { model: string; device: string; vector_dim: number; elapsed_ms: number };
     dense: { model: string; candidates: PipelineCandidate[]; elapsed_ms: number; security_filtered: boolean };
     bm25: { model: string; candidates: PipelineCandidate[]; elapsed_ms: number; security_filtered: boolean };

@@ -2,12 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { Send, Sparkles, User } from "lucide-react";
+import { Database, FileText, Layers, Send, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AccessDenied } from "@/components/AccessDenied";
-import { queryRAG, type ChunkResult, type Mode, type Role } from "@/lib/api";
+import {
+  queryRAG,
+  type ChunkResult,
+  type Mode,
+  type QueryRoute,
+  type Role,
+  type RouteDecision,
+  type SqlResult,
+} from "@/lib/api";
 import type { ChatMessage } from "@/lib/types";
 
 interface ChatInterfaceProps {
@@ -91,6 +99,8 @@ export function ChatInterface({
         accessDeniedMessage: response.access_denied_message,
         restrictedDocCount: response.retrieval_stats?.restricted_doc_count as number | undefined,
         timestamp: new Date(),
+        routeDecision: response.route ?? null,
+        sqlResult: response.sql_result ?? null,
       };
       setMessages((prev) => [...prev, asst]);
       onSourcesChange?.(response.sources, response.retrieval_stats);
@@ -217,13 +227,105 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             />
           </div>
         ) : (
-          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-headings:text-strong prose-strong:text-strong prose-a:text-violet-500 dark:prose-a:text-violet-300">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+          <div className="space-y-3">
+            {message.routeDecision ? <RouteBadge decision={message.routeDecision} /> : null}
+            {message.sqlResult ? <SqlResultBlock result={message.sqlResult} /> : null}
+            <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-headings:text-strong prose-strong:text-strong prose-a:text-violet-500 dark:prose-a:text-violet-300">
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+            </div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function RouteBadge({ decision }: { decision: RouteDecision }) {
+  const meta: Record<QueryRoute, { label: string; bg: string; text: string; Icon: typeof Database }> = {
+    sql: { label: "SQL", bg: "bg-emerald-500/15 border-emerald-500/40", text: "text-emerald-700 dark:text-emerald-200", Icon: Database },
+    rag: { label: "RAG", bg: "bg-blue-500/15 border-blue-500/40", text: "text-blue-700 dark:text-blue-200", Icon: FileText },
+    hybrid: { label: "Hybrid", bg: "bg-violet-500/15 border-violet-500/40", text: "text-violet-700 dark:text-violet-200", Icon: Layers },
+  };
+  const m = meta[decision.route];
+  const Icon = m.Icon;
+  return (
+    <div className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${m.bg} ${m.text}`}>
+      <Icon className="h-3.5 w-3.5" />
+      <span className="font-medium">{m.label}</span>
+      <span className="opacity-70">· {decision.reason}</span>
+    </div>
+  );
+}
+
+function SqlResultBlock({ result }: { result: SqlResult }) {
+  if (!result.ok) {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+        <div className="font-medium">SQL path failed</div>
+        <div className="mt-1 opacity-80">{result.error || "Unknown SQL error."}</div>
+      </div>
+    );
+  }
+  const cols = result.columns || [];
+  const rows = result.rows || [];
+  const showRows = rows.slice(0, 25);
+  return (
+    <div className="space-y-2 rounded-md border border-base bg-surface-2/60 p-3 text-xs">
+      <div className="flex items-center justify-between text-muted-fg">
+        <span className="font-medium text-strong">SQL result</span>
+        <span>
+          {result.row_count} row{result.row_count === 1 ? "" : "s"}
+          {result.truncated ? " · truncated" : ""}
+          {typeof result.elapsed_ms === "number" ? ` · ${result.elapsed_ms}ms` : ""}
+        </span>
+      </div>
+      {result.sql ? (
+        <pre className="overflow-x-auto rounded bg-surface-1 p-2 text-[11px] leading-snug text-muted-fg">
+          <code>{result.sql}</code>
+        </pre>
+      ) : null}
+      {rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-b border-base text-muted-fg">
+                {cols.map((c) => (
+                  <th key={c} className="px-2 py-1 font-medium">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {showRows.map((r, i) => (
+                <tr key={i} className="border-b border-base/40 last:border-0">
+                  {cols.map((c) => (
+                    <td key={c} className="px-2 py-1 align-top">
+                      {formatCell(r[c])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length > showRows.length ? (
+            <div className="pt-1 text-muted-fg">Showing first {showRows.length} of {rows.length}.</div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="text-muted-fg">Query returned 0 rows.</div>
+      )}
+    </div>
+  );
+}
+
+function formatCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number") {
+    return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, "");
+  }
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
 }
 
 function LoadingBubble() {

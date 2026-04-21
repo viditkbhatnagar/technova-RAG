@@ -28,9 +28,14 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     llm_model: str = "gpt-4o-mini"
     docs_path: str = "docs/"
+    structured_docs_path: str = "docs/structured_docs/"
     bm25_index_path: str = "backend/bm25_index.pkl"
     graph_data_path: str = "backend/graph_data.json"
+    sqlite_db_path: str = "backend/structured.db"
+    sql_schema_registry_path: str = "backend/sql_schema_registry.json"
     database_url: str = ""
+    sql_row_limit: int = 100
+    sql_statement_timeout_ms: int = 5000
 
     @property
     def docs_dir(self) -> Path:
@@ -45,6 +50,21 @@ class Settings(BaseSettings):
     @property
     def graph_data_file(self) -> Path:
         path = Path(self.graph_data_path)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @property
+    def structured_docs_dir(self) -> Path:
+        path = Path(self.structured_docs_path)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @property
+    def sqlite_db_file(self) -> Path:
+        path = Path(self.sqlite_db_path)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @property
+    def sql_schema_registry_file(self) -> Path:
+        path = Path(self.sql_schema_registry_path)
         return path if path.is_absolute() else PROJECT_ROOT / path
 
 
@@ -146,3 +166,160 @@ DOCUMENT_METADATA: dict[str, dict] = {
         "security_label": "RESTRICTED",
     },
 }
+
+
+TABLE_METADATA: dict[str, dict] = {
+    "departments": {
+        "source_file": "01_Departments.xlsx",
+        "sheet": "Departments",
+        "description": "Master list of TechNova organizational departments with budgets and cost-center codes.",
+        "primary_key": "department_id",
+        "domain": "Corporate",
+        "security_level": 0,
+        "security_label": "PUBLIC",
+    },
+    "employees": {
+        "source_file": "02_Employees.xlsx",
+        "sheet": "Employees",
+        "description": "Master employee roster with level (L1-L8), department, manager, location, status.",
+        "primary_key": "employee_id",
+        "domain": "HR",
+        "security_level": 1,
+        "security_label": "INTERNAL",
+    },
+    "salary_records": {
+        "source_file": "03_Salary_Records.xlsx",
+        "sheet": "Salary_Records",
+        "description": "Compensation per employee for FY2025-26: base, variable, CTC, ESOPs, rating.",
+        "primary_key": "salary_record_id",
+        "domain": "HR",
+        "security_level": 3,
+        "security_label": "RESTRICTED",
+    },
+    "customers": {
+        "source_file": "04_Customers.xlsx",
+        "sheet": "Customers",
+        "description": "Enterprise customer accounts: tier, region, ARR, contract renewal, account manager.",
+        "primary_key": "customer_id",
+        "domain": "Sales",
+        "security_level": 2,
+        "security_label": "CONFIDENTIAL",
+    },
+    "products_services": {
+        "source_file": "05_Products_Services.xlsx",
+        "sheet": "Products_Services",
+        "description": "Nova Platform microservices + AI products. Criticality tier, owning dept, tech stack.",
+        "primary_key": "service_id",
+        "domain": "Engineering",
+        "security_level": 1,
+        "security_label": "INTERNAL",
+    },
+    "incidents": {
+        "source_file": "06_Incidents.xlsx",
+        "sheet": "Incidents",
+        "description": "Security & ops incidents. SEV classification, affected service, reporter, remediation cost.",
+        "primary_key": "incident_id",
+        "domain": "Security",
+        "security_level": 3,
+        "security_label": "RESTRICTED",
+    },
+    "vendors": {
+        "source_file": "07_Vendors.xlsx",
+        "sheet": "Vendors",
+        "description": "Third-party vendors with SIG-Lite risk score, category, annual spend, owning dept.",
+        "primary_key": "vendor_id",
+        "domain": "Procurement",
+        "security_level": 2,
+        "security_label": "CONFIDENTIAL",
+    },
+    "financial_transactions": {
+        "source_file": "08_Financial_Transactions.xlsx",
+        "sheet": "Financial_Transactions",
+        "description": "Quarterly P&L/CapEx lines by department, region, vendor, customer (INR crores).",
+        "primary_key": "transaction_id",
+        "domain": "Finance",
+        "security_level": 2,
+        "security_label": "CONFIDENTIAL",
+    },
+    "training_compliance": {
+        "source_file": "09_Training_Compliance.xlsx",
+        "sheet": "Training_Compliance",
+        "description": "Mandatory training + external certification records per employee (4 modules x employees).",
+        "primary_key": "training_record_id",
+        "domain": "HR",
+        "security_level": 0,
+        "security_label": "PUBLIC",
+    },
+    "assets_licenses": {
+        "source_file": "10_Assets_Licenses.xlsx",
+        "sheet": "Assets_Licenses",
+        "description": "Hardware (laptops, GPU workstations) and software licenses allocated per employee.",
+        "primary_key": "asset_id",
+        "domain": "IT",
+        "security_level": 1,
+        "security_label": "INTERNAL",
+    },
+}
+
+
+FOREIGN_KEYS: list[dict] = [
+    {"table": "employees", "column": "department_id", "references": "departments.department_id"},
+    {"table": "employees", "column": "manager_employee_id", "references": "employees.employee_id"},
+    {"table": "salary_records", "column": "employee_id", "references": "employees.employee_id"},
+    {"table": "customers", "column": "account_manager_employee_id", "references": "employees.employee_id"},
+    {"table": "products_services", "column": "owner_department_id", "references": "departments.department_id"},
+    {"table": "incidents", "column": "affected_service_id", "references": "products_services.service_id"},
+    {"table": "incidents", "column": "reporter_employee_id", "references": "employees.employee_id"},
+    {"table": "vendors", "column": "owner_department_id", "references": "departments.department_id"},
+    {"table": "financial_transactions", "column": "department_id", "references": "departments.department_id"},
+    {"table": "financial_transactions", "column": "vendor_id", "references": "vendors.vendor_id"},
+    {"table": "financial_transactions", "column": "customer_id", "references": "customers.customer_id"},
+    {"table": "training_compliance", "column": "employee_id", "references": "employees.employee_id"},
+    {"table": "assets_licenses", "column": "employee_id", "references": "employees.employee_id"},
+    {"table": "assets_licenses", "column": "vendor_id", "references": "vendors.vendor_id"},
+]
+
+
+NARRATIVE_ROW_TABLES: dict[str, dict] = {
+    "incidents": {
+        "doc_slug": "structured_incidents",
+        "doc_name": "Incidents (Structured Rows)",
+        "id_column": "incident_id",
+        "ref_column": "incident_ref",
+        "template_columns": [
+            "incident_ref", "incident_type", "severity", "status",
+            "reported_date", "resolved_date", "affected_service_id",
+            "reporter_employee_id", "impact_region",
+            "customers_affected_count", "data_exfiltrated_gb",
+            "remediation_cost_inr_lakhs", "description",
+        ],
+    },
+}
+
+
+EXAMPLE_SQL_QUERIES: list[dict] = [
+    {
+        "question": "Which Tier-1 customers in APAC are managed by account managers who have NOT completed DPDP training?",
+        "join_path": "customers -> employees -> training_compliance (module='DPDP Act 2023') -> departments",
+    },
+    {
+        "question": "Total vendor spend per department in FY2025-26, broken down by vendor category.",
+        "join_path": "financial_transactions -> vendors -> departments. GROUP BY department, category.",
+    },
+    {
+        "question": "All SEV-1/SEV-2 incidents affecting services owned by AI Research, with reporter name and CTC band.",
+        "join_path": "incidents -> products_services -> departments + incidents -> employees -> salary_records.",
+    },
+    {
+        "question": "Employees at L5+ who own Apple laptops AND have unresolved training modules.",
+        "join_path": "assets_licenses -> vendors('Apple') + employees -> salary_records(level) + training_compliance(status != Completed).",
+    },
+    {
+        "question": "Departments ranked by ratio of incident remediation cost to quarterly budget.",
+        "join_path": "incidents -> products_services -> departments + SUM(remediation_cost)/budget.",
+    },
+    {
+        "question": "Total ESOP value granted to active employees in Engineering at FMV of INR 842/share.",
+        "join_path": "salary_records -> employees -> departments. Compute esop_units * fmv.",
+    },
+]

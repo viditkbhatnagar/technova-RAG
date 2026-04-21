@@ -10,7 +10,11 @@ import type {
   PipelineStage,
   PipelineTrace,
   PipelineTraceRequest,
+  QueryRoute,
   Role,
+  RouteDecision,
+  SqlAttempt,
+  SqlResult,
   SyncResult,
 } from "./api";
 
@@ -26,7 +30,11 @@ export type {
   PipelineStage,
   PipelineTrace,
   PipelineTraceRequest,
+  QueryRoute,
   Role,
+  RouteDecision,
+  SqlAttempt,
+  SqlResult,
   SyncResult,
 };
 
@@ -39,6 +47,8 @@ export interface ChatMessage {
   accessDeniedMessage?: string | null;
   restrictedDocCount?: number;
   timestamp: Date;
+  routeDecision?: RouteDecision | null;
+  sqlResult?: SqlResult | null;
 }
 
 export const SECURITY_COLORS: Record<number, { label: string; bg: string; text: string; border: string; hex: string }> = {

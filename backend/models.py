@@ -21,12 +21,25 @@ class IngestDocDetail(BaseModel):
     security_level: str
 
 
+class StructuredTableSummary(BaseModel):
+    name: str
+    rows: int
+    security: str
+
+
+class StructuredIngestSummary(BaseModel):
+    sqlite_path: str
+    schema_registry_path: str
+    tables: list[StructuredTableSummary]
+
+
 class IngestResponse(BaseModel):
     status: str
     documents_processed: int
     total_chunks: int
     collection_name: str
     details: list[IngestDocDetail]
+    structured: StructuredIngestSummary | None = None
 
 
 # ---------- /api/query ----------
@@ -49,6 +62,32 @@ class ChunkResult(BaseModel):
     retrieval_method: str
 
 
+class SqlAttempt(BaseModel):
+    sql: str
+    error: str | None = None
+
+
+class SqlResult(BaseModel):
+    ok: bool
+    sql: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+    truncated: bool = False
+    elapsed_ms: int | None = None
+    total_elapsed_ms: int | None = None
+    error: str | None = None
+    attempts: list[SqlAttempt] = Field(default_factory=list)
+
+
+class RouteDecision(BaseModel):
+    route: Literal["sql", "rag", "hybrid"]
+    confidence: str
+    reason: str
+    signals: dict[str, Any] = Field(default_factory=dict)
+    heuristic_reason: str | None = None
+
+
 class QueryResponse(BaseModel):
     answer: str
     sources: list[ChunkResult]
@@ -57,6 +96,8 @@ class QueryResponse(BaseModel):
     access_denied: bool = False
     access_denied_message: str | None = None
     session_id: UUID | None = None
+    route: RouteDecision | None = None
+    sql_result: SqlResult | None = None
 
 
 # ---------- /api/sessions ----------

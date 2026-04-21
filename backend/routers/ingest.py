@@ -5,11 +5,22 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 
 from backend.config import DOCUMENT_METADATA, settings
-from backend.models import IngestDocDetail, IngestRequest, IngestResponse
+from backend.models import (
+    IngestDocDetail,
+    IngestRequest,
+    IngestResponse,
+    StructuredIngestSummary,
+    StructuredTableSummary,
+)
 from backend.services.chunker import chunk_document
 from backend.services.db import chat_store
 from backend.services.graph_builder import GraphBuilder
 from backend.services.loader import IngestionError, list_pdfs, load_pdf
+from backend.services.structured_ingest import (
+    StructuredIngestionError,
+    ingest_structured_corpus,
+)
+from backend.services.structured_rows import build_row_chunks
 
 router = APIRouter()
 
@@ -106,6 +117,42 @@ async def ingest(req: IngestRequest, request: Request) -> IngestResponse:
             detail="No chunks were produced from any document.",
         )
 
+    try:
+        row_chunks = build_row_chunks()
+    except Exception as exc:
+        print(f"[ingest] warning: row-level embedding build failed: {exc}")
+        row_chunks = []
+
+    if row_chunks:
+        texts = [c["text"] for c in row_chunks]
+        embeddings = embedder.embed_texts(texts)
+        store.upsert_chunks(row_chunks, embeddings)
+        all_chunks.extend(row_chunks)
+
+        from collections import Counter
+        per_table = Counter(c["table"] for c in row_chunks)
+        seen_slugs: set[str] = set()
+        for rc in row_chunks:
+            seen_slugs.add(rc["doc_slug"])
+        for slug in seen_slugs:
+            same_slug = [c for c in row_chunks if c["doc_slug"] == slug]
+            head = same_slug[0]
+            doc_rows.append({
+                "doc_slug": head["doc_slug"],
+                "doc_name": head["doc_name"],
+                "file_name": head["file_name"],
+                "domain": head["domain"],
+                "security_level": head["security_level"],
+                "security_label": head["security_label"],
+                "page_count": 0,
+                "chunk_count": len(same_slug),
+                "char_count": sum(c["char_count"] for c in same_slug),
+            })
+        print(
+            f"[ingest] structured rows embedded: "
+            + ", ".join(f"{k}={v}" for k, v in per_table.items())
+        )
+
     bm25.build(all_chunks)
     try:
         bm25.save(settings.bm25_index_file)
@@ -145,10 +192,32 @@ async def ingest(req: IngestRequest, request: Request) -> IngestResponse:
     except Exception as exc:
         print(f"[ingest] warning: knowledge graph build failed: {exc}")
 
+    structured_summary: StructuredIngestSummary | None = None
+    try:
+        print("[ingest] ingesting structured corpus (Excel → SQLite)...")
+        s = ingest_structured_corpus()
+        structured_summary = StructuredIngestSummary(
+            sqlite_path=s["sqlite_path"],
+            schema_registry_path=s["schema_registry_path"],
+            tables=[StructuredTableSummary(**t) for t in s["tables"]],
+        )
+        sql_engine = getattr(request.app.state, "sql_engine", None)
+        if sql_engine is not None:
+            sql_engine.reload()
+            print(
+                f"[ingest] SQL engine reloaded — "
+                f"{len(sql_engine.registry.get('tables', []))} tables visible"
+            )
+    except StructuredIngestionError as exc:
+        print(f"[ingest] warning: structured ingest failed: {exc}")
+    except Exception as exc:
+        print(f"[ingest] warning: structured ingest error: {exc}")
+
     return IngestResponse(
         status="success",
         documents_processed=len(details),
         total_chunks=len(all_chunks),
         collection_name=settings.collection_name,
         details=details,
+        structured=structured_summary,
     )

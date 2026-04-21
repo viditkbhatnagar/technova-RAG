@@ -12,7 +12,9 @@ from backend.models import (
     PipelineTraceResponse,
 )
 from backend.services.generator import assemble_prompt, generate_answer
+from backend.services.query_router import route_query
 from backend.services.security import get_allowed_chunk_ids, get_security_filter
+from backend.services.sql_engine import SQLEngine
 
 router = APIRouter()
 
@@ -44,6 +46,44 @@ def pipeline_architecture() -> PipelineArchitectureResponse:
             description="The user's natural-language question.",
             role="input",
             color="#94a3b8",
+        ),
+        PipelineStageInfo(
+            id="route",
+            label="Router",
+            description=(
+                "Classifies the question as SQL (structured tables), RAG "
+                "(narrative docs), or Hybrid. Cheap heuristic first, LLM only "
+                "on low-confidence."
+            ),
+            role="router",
+            model=settings.llm_model,
+            color="#eab308",
+            runs_locally=True,
+        ),
+        PipelineStageInfo(
+            id="sql_gen",
+            label="SQL Generate",
+            description=(
+                "For SQL/Hybrid routes: LLM drafts a SELECT against role-filtered "
+                "schema, then sqlglot validates (SELECT-only, allowlisted tables, "
+                "LIMIT injected). One self-correcting retry on error."
+            ),
+            role="generator",
+            model=settings.llm_model,
+            color="#14b8a6",
+            runs_locally=False,
+        ),
+        PipelineStageInfo(
+            id="sql_exec",
+            label="SQL Execute",
+            description=(
+                "Read-only SQLite execution with statement timeout. Returns "
+                "columns + rows, truncated at the server row limit."
+            ),
+            role="executor",
+            model="SQLite (ro)",
+            color="#0ea5e9",
+            runs_locally=True,
         ),
         PipelineStageInfo(
             id="embed",
@@ -134,10 +174,14 @@ def pipeline_architecture() -> PipelineArchitectureResponse:
     ]
 
     edges = [
-        {"source": "query", "target": "embed"},
-        {"source": "query", "target": "security"},
+        {"source": "query", "target": "route"},
+        {"source": "route", "target": "sql_gen"},
+        {"source": "sql_gen", "target": "sql_exec"},
+        {"source": "sql_exec", "target": "llm"},
+        {"source": "route", "target": "embed"},
+        {"source": "route", "target": "security"},
         {"source": "embed", "target": "dense"},
-        {"source": "query", "target": "bm25"},
+        {"source": "route", "target": "bm25"},
         {"source": "security", "target": "dense"},
         {"source": "security", "target": "bm25"},
         {"source": "dense", "target": "rrf"},
@@ -174,6 +218,56 @@ async def pipeline_trace(req: PipelineTraceRequest, request: Request) -> Pipelin
         )
 
     t_total = time.perf_counter()
+    sql_engine: SQLEngine | None = getattr(request.app.state, "sql_engine", None)
+
+    t_route = time.perf_counter()
+    route_info = await route_query(req.query)
+    route_elapsed_ms = int((time.perf_counter() - t_route) * 1000)
+
+    sql_stage_gen: dict = {
+        "used": False,
+        "route": route_info.get("route"),
+        "elapsed_ms": 0,
+        "sql": None,
+        "error": None,
+    }
+    sql_stage_exec: dict = {
+        "used": False,
+        "elapsed_ms": 0,
+        "columns": [],
+        "rows": [],
+        "row_count": 0,
+        "truncated": False,
+        "error": None,
+    }
+
+    if (
+        route_info.get("route") in ("sql", "hybrid")
+        and sql_engine is not None
+        and sql_engine.is_ready()
+    ):
+        t_sql = time.perf_counter()
+        sql_result = await sql_engine.answer(
+            req.query, req.role if req.mode == "secure" else None
+        )
+        sql_total_ms = int((time.perf_counter() - t_sql) * 1000)
+        sql_stage_gen = {
+            "used": True,
+            "route": route_info.get("route"),
+            "elapsed_ms": sql_total_ms,
+            "sql": sql_result.get("sql"),
+            "error": sql_result.get("error"),
+            "attempts": sql_result.get("attempts", []),
+        }
+        sql_stage_exec = {
+            "used": bool(sql_result.get("ok")),
+            "elapsed_ms": sql_result.get("elapsed_ms") or 0,
+            "columns": sql_result.get("columns", []),
+            "rows": sql_result.get("rows", []),
+            "row_count": sql_result.get("row_count", 0),
+            "truncated": sql_result.get("truncated", False),
+            "error": sql_result.get("error"),
+        }
 
     security_filter = None
     allowed_ids = None
@@ -216,6 +310,15 @@ async def pipeline_trace(req: PipelineTraceRequest, request: Request) -> Pipelin
 
     stages: dict = {
         "query": {"text": req.query},
+        "route": {
+            "route": route_info.get("route"),
+            "confidence": route_info.get("confidence"),
+            "reason": route_info.get("reason"),
+            "signals": route_info.get("signals") or {},
+            "elapsed_ms": route_elapsed_ms,
+        },
+        "sql_gen": sql_stage_gen,
+        "sql_exec": sql_stage_exec,
         "embed": {
             "model": settings.embedding_model,
             "device": getattr(embedder, "device", "cpu"),

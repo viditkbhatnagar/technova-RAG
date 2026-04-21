@@ -17,6 +17,7 @@ from backend.services.bm25_index import BM25Index
 from backend.services.db import chat_store
 from backend.services.embedder import EmbeddingService
 from backend.services.retriever import HybridRetriever
+from backend.services.sql_engine import SQLEngine
 from backend.services.store import QdrantStore
 
 
@@ -55,6 +56,15 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.bm25 = bm25
     app.state.retriever = retriever
+
+    print("[startup] loading SQL engine (structured corpus)...")
+    sql_engine = SQLEngine()
+    if sql_engine.is_ready():
+        tbl_count = len(sql_engine.registry.get("tables", []))
+        print(f"[startup] SQL engine ready ({tbl_count} tables)")
+    else:
+        print("[startup] SQL engine not ready — run /api/ingest to build SQLite")
+    app.state.sql_engine = sql_engine
 
     app.state.graph_data = None
     graph_file = settings.graph_data_file

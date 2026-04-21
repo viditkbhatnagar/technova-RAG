@@ -23,6 +23,9 @@ _PAYLOAD_FIELDS = (
     "total_chunks",
     "char_count",
     "content_hash",
+    "source_type",
+    "table",
+    "row_id",
 )
 
 
