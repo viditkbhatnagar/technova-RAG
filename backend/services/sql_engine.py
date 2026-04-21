@@ -23,7 +23,7 @@ import sqlglot
 from sqlglot import exp
 from openai import AsyncOpenAI, OpenAIError
 
-from backend.config import ROLE_CLEARANCE, settings
+from backend.config import ROLE_CLEARANCE, TABLE_HINTS, settings
 from backend.services.structured_ingest import load_schema_registry
 
 
@@ -31,18 +31,59 @@ class SQLValidationError(Exception):
     pass
 
 
-_SYSTEM_PROMPT = """You are a SQL analyst for TechNova Inc. You write a SINGLE SQLite SELECT query to answer the user's question using ONLY the tables and columns provided in SCHEMA below.
+_SYSTEM_PROMPT = """You are a SQL analyst for TechNova Inc. You write a SINGLE SQLite SELECT query to answer the user's question using ONLY the tables and columns in SCHEMA below.
 
-Hard rules:
+OUTPUT:
 - Output ONLY the SQL query. No prose, no markdown fences, no comments.
-- Use SELECT only. Never INSERT, UPDATE, DELETE, CREATE, DROP, ATTACH, or PRAGMA.
-- Only reference tables and columns listed in SCHEMA. Do not invent columns.
-- Quote string literals with single quotes. Use ISO dates 'YYYY-MM-DD'.
-- If the question asks for rankings or top-N, include ORDER BY and LIMIT.
-- Always include a LIMIT clause (<= {row_limit}). If the user doesn't specify, default to LIMIT {row_limit}.
-- For aggregations, return the grouping columns alongside the aggregates.
-- Join tables on the foreign keys shown in SCHEMA.
-- Dates are stored as TEXT in 'YYYY-MM-DD' format — compare with string ranges or substr().
+- Use SELECT only. Never INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ATTACH/PRAGMA.
+- Only reference tables and columns listed in SCHEMA. Do not invent columns or values.
+- Always include a LIMIT clause (<= {row_limit}). Default LIMIT {row_limit}.
+
+CRITICAL RULES for correctness:
+
+1) ADJECTIVE → WHERE FILTER. Every adjective, category, or scope word in the question must become a WHERE filter. Examples:
+   - "critical services"        -> WHERE criticality_tier = 'Critical'
+   - "flagged vendors"          -> WHERE risk_status IN ('Conditional','Suspended')
+   - "active employees"         -> WHERE employment_status = 'Active'
+   - "overdue training"         -> WHERE status = 'Overdue'
+   - "training gap" / "behind"  -> WHERE status != 'Completed'
+   - "SEV-1 or SEV-2 incidents" -> WHERE severity IN ('SEV-1','SEV-2')
+   - "this fiscal year"         -> date range or period_quarter LIKE '%FY2025-26'
+   See the per-table HINTS in SCHEMA for the canonical mapping.
+
+2) ENUM VALUES ARE FIXED. A column shown as `values: [...]` has ONLY those values — never invent new ones (no 'Flagged', no 'Failed', no 'Pending' unless listed).
+
+3) GRAIN = ENTITY IN QUESTION. If the user asks for a list of entity X (services, customers, vendors, incidents…), the SELECT must be at the grain of X — not X × employees × licenses. When you JOIN through intermediate tables, use DISTINCT or GROUP BY on the entity's primary key to dedupe. Never return repeated rows of the same entity.
+
+4) "X WITH Y" needs EXISTS / aggregation, not naive JOIN. For questions like "services whose owning team has a flagged vendor", prefer one of:
+   - SELECT ... FROM X JOIN Y ... WHERE ... GROUP BY X.pk  (and aggregate Y with GROUP_CONCAT / COUNT)
+   - SELECT ... FROM X WHERE EXISTS (SELECT 1 FROM Y WHERE ...)
+   Do NOT explode X by joining through per-employee tables unless the question is per-employee.
+
+5) JOIN via FOREIGN KEYS shown in SCHEMA. For service→vendor relationships go via shared owner_department_id, NOT via assets_licenses (which is employee hardware).
+
+6) DATES are TEXT in 'YYYY-MM-DD'. Use BETWEEN '2026-01-01' AND '2026-12-31' for year ranges.
+"""
+
+
+_CRITIQUE_PROMPT = """You review SQL drafts for a corporate analyst.
+
+The user asked: {question}
+
+The draft SQL is:
+{sql}
+
+Available schema:
+{schema}
+
+Check the draft against these rules:
+(a) Does every adjective / category / scope word from the question become a WHERE filter? (e.g. "critical" -> criticality_tier='Critical', "flagged" -> risk_status IN ('Conditional','Suspended'), "overdue" -> status='Overdue').
+(b) Does the SELECT grain match the entity the user asked about? If the question says "show me X" and the SQL joins through other tables, it needs DISTINCT on X's PK or GROUP BY on X's columns — otherwise rows will be duplicated.
+(c) Are all enum values used in WHERE actually listed in the schema's `values: [...]` for that column? Invented values = 0 rows.
+(d) For "X with any Y" patterns, prefer EXISTS or GROUP BY on X over a naive join that explodes rows.
+
+If the draft is correct on all four, output the draft SQL unchanged.
+Otherwise, output a corrected SQL query. Output SQL ONLY, no prose.
 """
 
 
@@ -109,19 +150,33 @@ class SQLEngine:
             for fk in t.get("foreign_keys", []):
                 fk_lines.append(f"    FK: {fk['column']} -> {fk['references']}")
 
+            hint_lines = []
+            for h in TABLE_HINTS.get(t["name"], []):
+                hint_lines.append(f"    HINT: {h}")
+
             parts.append(
                 f"TABLE {t['name']}  ({t['row_count']} rows, PK={t['primary_key']})\n"
                 f"  -- {t['description']}\n"
                 + "\n".join(col_lines)
                 + ("\n" + "\n".join(fk_lines) if fk_lines else "")
+                + ("\n" + "\n".join(hint_lines) if hint_lines else "")
             )
 
         examples = self.registry.get("example_queries", [])[:4]
         example_block = ""
         if examples:
-            example_block = "\n\nEXAMPLE JOIN PATHS (for reference only):\n" + "\n".join(
-                f"- {e['question']}\n  {e['join_path']}" for e in examples
-            )
+            example_parts = []
+            for e in examples:
+                if e.get("sql"):
+                    example_parts.append(
+                        f"Q: {e['question']}\nSQL:\n{e['sql']};"
+                    )
+                elif e.get("join_path"):
+                    example_parts.append(
+                        f"Q: {e['question']}\nJoin path: {e['join_path']}"
+                    )
+            if example_parts:
+                example_block = "\n\nFEW-SHOT EXAMPLES:\n" + "\n\n".join(example_parts)
 
         return "SCHEMA:\n" + "\n\n".join(parts) + example_block
 
@@ -227,6 +282,38 @@ class SQLEngine:
         text = (resp.choices[0].message.content or "").strip()
         return _strip_code_fence(text)
 
+    async def critique_sql(
+        self, question: str, role: str | None, draft_sql: str
+    ) -> str:
+        """Second LLM pass: check the draft against the question; rewrite if needed.
+
+        Catches the class of bugs where the draft parses and executes but returns
+        wrong rows because it missed an adjective filter, exploded M:N joins, or
+        invented an enum value.
+        """
+        if not settings.openai_api_key:
+            return draft_sql
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        prompt = _CRITIQUE_PROMPT.format(
+            question=question,
+            sql=draft_sql,
+            schema=self.schema_prompt(role),
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": "You review SQL for correctness. Output SQL only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=600,
+            )
+            refined = _strip_code_fence((resp.choices[0].message.content or "").strip())
+            return refined or draft_sql
+        except OpenAIError:
+            return draft_sql
+
     async def repair_sql(
         self, question: str, role: str | None, bad_sql: str, error: str
     ) -> str:
@@ -270,6 +357,13 @@ class SQLEngine:
             return {"ok": False, "error": f"LLM error: {exc}", "attempts": []}
         except SQLValidationError as exc:
             return {"ok": False, "error": str(exc), "attempts": []}
+
+        # Critique pass: catches missing filters, M:N explosions, invented
+        # enum values. One extra LLM call — worth it for correctness.
+        try:
+            draft = await self.critique_sql(question, role, draft)
+        except Exception as exc:
+            print(f"[sql_engine] critique pass skipped: {exc}")
 
         validated: str | None = None
         exec_result: dict | None = None

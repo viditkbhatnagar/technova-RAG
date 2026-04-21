@@ -300,26 +300,110 @@ NARRATIVE_ROW_TABLES: dict[str, dict] = {
 EXAMPLE_SQL_QUERIES: list[dict] = [
     {
         "question": "Which Tier-1 customers in APAC are managed by account managers who have NOT completed DPDP training?",
-        "join_path": "customers -> employees -> training_compliance (module='DPDP Act 2023') -> departments",
+        "sql": (
+            "SELECT DISTINCT c.customer_name, c.tier, c.region, "
+            "e.first_name || ' ' || e.last_name AS account_manager "
+            "FROM customers c "
+            "JOIN employees e ON e.employee_id = c.account_manager_employee_id "
+            "WHERE c.tier = 'Tier 1' AND c.region = 'APAC' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM training_compliance tc "
+            "  WHERE tc.employee_id = e.employee_id "
+            "  AND tc.module_name = 'DPDP Act 2023' "
+            "  AND tc.status = 'Completed'"
+            ") "
+            "LIMIT 100"
+        ),
     },
     {
-        "question": "Total vendor spend per department in FY2025-26, broken down by vendor category.",
-        "join_path": "financial_transactions -> vendors -> departments. GROUP BY department, category.",
+        "question": "Show critical services whose owning department has a flagged vendor. List the service, department, and flagged vendor names.",
+        "sql": (
+            "SELECT ps.service_name, ps.criticality_tier, d.department_name, "
+            "GROUP_CONCAT(DISTINCT v.vendor_name) AS flagged_vendors "
+            "FROM products_services ps "
+            "JOIN departments d ON d.department_id = ps.owner_department_id "
+            "JOIN vendors v ON v.owner_department_id = ps.owner_department_id "
+            "WHERE ps.criticality_tier = 'Critical' "
+            "AND v.risk_status IN ('Conditional','Suspended') "
+            "GROUP BY ps.service_id, ps.service_name, ps.criticality_tier, d.department_name "
+            "ORDER BY ps.service_name "
+            "LIMIT 100"
+        ),
     },
     {
-        "question": "All SEV-1/SEV-2 incidents affecting services owned by AI Research, with reporter name and CTC band.",
-        "join_path": "incidents -> products_services -> departments + incidents -> employees -> salary_records.",
+        "question": "Which departments have at least 3 employees overdue on mandatory training?",
+        "sql": (
+            "SELECT d.department_name, "
+            "COUNT(DISTINCT tc.employee_id) AS overdue_employees "
+            "FROM training_compliance tc "
+            "JOIN employees e ON e.employee_id = tc.employee_id "
+            "JOIN departments d ON d.department_id = e.department_id "
+            "WHERE tc.status = 'Overdue' "
+            "GROUP BY d.department_name "
+            "HAVING overdue_employees >= 3 "
+            "ORDER BY overdue_employees DESC "
+            "LIMIT 100"
+        ),
     },
     {
-        "question": "Employees at L5+ who own Apple laptops AND have unresolved training modules.",
-        "join_path": "assets_licenses -> vendors('Apple') + employees -> salary_records(level) + training_compliance(status != Completed).",
-    },
-    {
-        "question": "Departments ranked by ratio of incident remediation cost to quarterly budget.",
-        "join_path": "incidents -> products_services -> departments + SUM(remediation_cost)/budget.",
-    },
-    {
-        "question": "Total ESOP value granted to active employees in Engineering at FMV of INR 842/share.",
-        "join_path": "salary_records -> employees -> departments. Compute esop_units * fmv.",
+        "question": "Total vendor spend per department in FY2025-26 by vendor category.",
+        "sql": (
+            "SELECT d.department_name, v.category, "
+            "SUM(ft.amount) AS total_spend_inr_crores "
+            "FROM financial_transactions ft "
+            "JOIN departments d ON d.department_id = ft.department_id "
+            "JOIN vendors v ON v.vendor_id = ft.vendor_id "
+            "WHERE ft.period_quarter LIKE '%FY2025-26' "
+            "GROUP BY d.department_name, v.category "
+            "ORDER BY total_spend_inr_crores DESC "
+            "LIMIT 100"
+        ),
     },
 ]
+
+
+# Business-vocabulary hints. The LLM sees these per-table in the schema prompt
+# so colloquial phrases like "flagged vendors" or "training gap" map to the
+# right enum filter instead of being invented.
+TABLE_HINTS: dict[str, list[str]] = {
+    "products_services": [
+        "'critical services' / 'most important services' -> WHERE criticality_tier = 'Critical'",
+        "'high-availability' / 'high SLA' -> WHERE uptime_sla_percent >= 99.9",
+    ],
+    "vendors": [
+        "'flagged vendors' / 'risky vendors' / 'at-risk vendors' -> WHERE risk_status IN ('Conditional','Suspended')",
+        "'failed SIG-Lite' -> WHERE sig_lite_score < 70",
+    ],
+    "training_compliance": [
+        "'training gap' / 'behind on training' / 'not up to date' -> WHERE status != 'Completed'",
+        "'overdue training' -> WHERE status = 'Overdue'",
+        "'mandatory training' applies to all rows — no special filter needed; restrict by module_name if specified",
+    ],
+    "incidents": [
+        "'major incidents' / 'severe' / 'high severity' -> WHERE severity IN ('SEV-1','SEV-2')",
+        "'open incidents' / 'unresolved' -> WHERE status != 'Resolved'",
+        "'this fiscal year' / 'FY2025-26' -> reported_date BETWEEN '2025-04-01' AND '2026-03-31'",
+    ],
+    "employees": [
+        "'active employees' -> WHERE employment_status = 'Active'",
+        "'senior employees' / 'leadership' / 'L5+' -> WHERE level IN ('L5','L6','L7','L8')",
+    ],
+    "customers": [
+        "'top customers' / 'big accounts' -> ORDER BY arr_inr_lakhs DESC",
+        "'churned' / 'lost' -> WHERE account_status = 'Churned'",
+        "'renewing in 2026' -> WHERE contract_renewal_date BETWEEN '2026-01-01' AND '2026-12-31'",
+    ],
+    "salary_records": [
+        "'ESOP value' -> SUM(esop_units_granted * esop_fmv_per_share_inr)",
+        "'high performers' -> WHERE performance_rating IN ('Exceeds','Significantly Exceeds')",
+    ],
+    "assets_licenses": [
+        "'active assets' -> WHERE status IN ('In Use','Active')",
+        "'expiring soon' -> WHERE expiry_or_return_date BETWEEN date('now') AND date('now','+90 days')",
+    ],
+    "financial_transactions": [
+        "'revenue' -> WHERE category = 'Revenue'",
+        "'spend' / 'cost' -> WHERE category != 'Revenue'",
+        "'this fiscal year' / 'FY2025-26' -> WHERE period_quarter LIKE '%FY2025-26'",
+    ],
+}

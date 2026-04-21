@@ -123,8 +123,9 @@ flowchart TD
     R -->|hybrid| P1
     R -->|rag| RAG
     P1 -->|yes → deny| DENY[403-style access_denied response]
-    P1 -->|no| SG[SQL generate<br/>gpt-4o-mini + schema prompt]
-    SG --> V{sqlglot validate<br/>SELECT-only<br/>allowlisted tables<br/>LIMIT injected}
+    P1 -->|no| SG[SQL generate<br/>gpt-4o-mini + enriched schema prompt]
+    SG --> CR[Critique pass<br/>did SQL capture every adjective?<br/>any M:N row explosion?<br/>invented enum values?]
+    CR --> V{sqlglot validate<br/>SELECT-only<br/>allowlisted tables<br/>LIMIT injected}
     V -->|fail| RX[repair_sql — one retry<br/>with error fed back]
     RX --> V
     V -->|ok| EX[SQLite read-only execute]
@@ -177,7 +178,56 @@ Preflight catches the silent-substitution failure mode where, asked for
 "average CTC", the LLM would otherwise join `assets_licenses.annual_cost` as a
 proxy and return a confident wrong answer.
 
-### 4c. SQL engine safeguards
+### 4c. Four-layer hardening against silent wrong answers
+
+Text-to-SQL has a characteristic failure mode: the SQL parses, executes, and
+returns a plausible (often empty) result — but it's wrong because the LLM
+missed an adjective, invented an enum value, or exploded rows through an M:N
+join. The user sees "0 rows found" or a confident-looking table and never
+realizes the query was malformed.
+
+Four layered defenses:
+
+1. **Full enum values in the schema prompt.** For every `TEXT` column with ≤10
+   distinct values we list all of them: `risk_status TEXT values: ['Passed',
+   'Conditional', 'Suspended']`. Kills the "invented value" class of bug —
+   the LLM can't write `WHERE risk_status = 'Flagged'` when the actual values
+   are right in front of it. Captured at ingest via
+   `distinct_count + distinct_preview`.
+
+2. **Business-vocabulary hints per table** (`TABLE_HINTS` in
+   [backend/config.py](backend/config.py)). The schema prompt includes lines
+   like:
+   ```
+   HINT: "flagged vendors" / "risky vendors" -> WHERE risk_status IN ('Conditional','Suspended')
+   HINT: "critical services" -> WHERE criticality_tier = 'Critical'
+   HINT: "training gap" / "behind on training" -> WHERE status != 'Completed'
+   ```
+   The LLM maps colloquial user words to the right filters without guessing.
+
+3. **Stronger system prompt with explicit rules.** Six numbered rules cover:
+   (1) adjective → WHERE, (2) enum values are fixed, (3) SELECT grain must
+   match the entity asked about (DISTINCT or GROUP BY for M:N), (4) prefer
+   EXISTS/aggregation over naive joins for "X with any Y" patterns, (5) FK
+   join paths, (6) date handling.
+
+4. **Critique pass** (`SQLEngine.critique_sql`). After the first draft, a
+   second LLM call asks: "does this SQL reflect every adjective/filter word
+   from the question? does the SELECT grain match the entity? are all enum
+   values actually listed in the schema?" If the critique finds a gap, it
+   rewrites the SQL. Costs one extra `gpt-4o-mini` call per SQL question
+   (~400ms) — worth it for the correctness uplift.
+
+Measured impact on the motivating query ("critical services where owning team
+is behind on training and uses flagged vendors"):
+
+| Configuration | Rows returned | Correct? |
+|---|---|---|
+| Baseline | 0 | ❌ LLM invented `risk_status='Flagged'` |
+| + enum values in prompt | 100 (capped) | ❌ still missed `criticality_tier='Critical'`, exploded via employee × license joins |
+| + hints + critique pass | **22** | ✅ matches hand-written ground truth |
+
+### 4d. SQL engine safeguards
 
 [backend/services/sql_engine.py](backend/services/sql_engine.py) rejects:
 
