@@ -34,6 +34,7 @@ from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import ROLE_CLEARANCE, settings
 from backend.services.embedder import EmbeddingService
+from backend.services.policy_digest import format_digest_for_prompt, load_policy_digest
 from backend.services.retriever import HybridRetriever
 from backend.services.security import get_allowed_chunk_ids, get_security_filter
 from backend.services.sql_engine import SQLEngine, SQLValidationError
@@ -43,10 +44,16 @@ from backend.services.store import QdrantStore
 _AGENT_SYSTEM = """You are a data analyst for TechNova Inc. Answer the user's question using the available tools. Think step by step.
 
 Strategy:
-- For numeric, listing, ranking, or filtering questions, call `run_sql` with a SELECT query (SQLite dialect, LIMIT <= {row_limit}).
-- If you are unsure which table or column holds a concept, call `retrieve` (it semantic-searches PDFs + schema docs + row docs), or `describe(table)` for a focused profile, or `list_values(table, column)` for the distinct values.
-- If the question references a policy rate, threshold, or definition not in the schema (e.g. "retention bonus %", "on-call stipend", "data localization countries"), call `retrieve` on that concept FIRST to pull the PDF text, then use `calculator` to apply it to your SQL results.
-- `sample_rows` is for cases where you need to see actual rows before writing a complex SQL.
+- STEP 1 — DECOMPOSE. If the question contains multiple clauses (e.g. "X AND Y AND whether Z"), first write down each sub-question as a numbered list. Answer each one separately. Do NOT skip any sub-question.
+- STEP 2 — USE THE POLICY DIGEST (appended below). It contains pre-extracted rules, thresholds, rates, dates, and key facts from our PDFs. For any sub-question about retention %, on-call rate, IPO timeline, budget utilization, cyber insurance, ESOP rules, DRHP date, etc. — the answer is ALREADY in the digest. Quote it directly. Don't call `retrieve` unless the digest doesn't contain the fact you need.
+- STEP 3 — RUN SQL for whichever sub-questions need numbers from the Excel tables. Be methodical; one SQL per sub-question is fine, multiple is better than none.
+- STEP 4 — USE `calculator` to combine digest rates with SQL numbers (e.g. 30% × SUM(CTCs)). Verify units.
+- STEP 5 — Synthesize the final answer clause-by-clause, matching the user's original structure. Every sub-question in the user's ask must have an answer line.
+
+`retrieve` is for narrative text or policies not in the digest.
+`list_values` verifies a categorical value before you filter.
+`describe(table)` gets a focused column profile for one table.
+`sample_rows` peeks at real data.
 
 Hard rules:
 - Only reference tables and columns that actually exist. `describe` or `retrieve` first if unsure.
@@ -79,10 +86,11 @@ GRAIN:
 - If the user asks for a list of entity X, the answer should be at the grain of X. Use DISTINCT / GROUP BY to dedupe when joining through intermediate tables.
 
 FINAL ANSWER FORMAT:
-- Quote exact numbers from SQL results with their units.
-- Cite which sources you used (SQL query tables / PDF doc names).
-- Include a short "Assumptions:" section when you had to interpret fuzzy terms.
-- If part of the question couldn't be answered from the data, say so plainly.
+- Structure the answer to MATCH THE USER'S QUESTION. If they listed 5 things to include, your answer has 5 sections — one per thing.
+- Quote exact numbers from SQL results and from the policy digest, with units.
+- Cite sources inline ([Salary_Structure] for digest items, [incidents table] for SQL).
+- Include an "Assumptions:" section at the end when you had to interpret fuzzy terms.
+- If part of the question couldn't be answered, say so PLAINLY in the relevant section — don't silently skip.
 """
 
 
@@ -133,6 +141,7 @@ class SQLAgent:
         self.embedder = embedder
         self.max_iters = settings.sql_agent_max_iters
         self.row_limit = settings.sql_row_limit
+        self.policy_digest_text = format_digest_for_prompt(load_policy_digest())
 
     # ---------- tool handlers ----------
 
@@ -479,6 +488,15 @@ class SQLAgent:
             row_limit=self.row_limit,
             max_iters=self.max_iters,
         )
+        if self.policy_digest_text:
+            system_prompt = (
+                system_prompt
+                + "\n\n"
+                + self.policy_digest_text
+                + "\n\nThe digest above contains the most common policy rates and "
+                "thresholds from our PDFs. Quote them directly when relevant — no "
+                "need to `retrieve` unless you need the surrounding narrative."
+            )
         schema_summary = self.sql.schema_prompt(role)
 
         messages: list[dict] = [

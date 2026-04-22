@@ -595,6 +595,78 @@ high-stakes analytical queries; leave at 1 for cheap lookups.
 
 ---
 
+## 12c. Layer 8 — Policy digest (auto-extracted PDF knowledge layer)
+
+**Problem exposed by C-level scenario questions.** After Layer 7.5 shipped,
+a stress-test prompt (*"If last November's breach happened again tomorrow
+on a critical AI service, what's the full end-to-end cost and is it an IPO
+threat?"*) revealed that even the agent struggled when a single question
+referenced ~7 different PDF-sourced numbers (retention %, on-call rate,
+DRHP timeline, Q4 budget utilization, cyber insurance limit, etc.). The
+agent was calling `retrieve` at most once or twice per question — not
+nearly enough for a policy-heavy scenario.
+
+**What we did.** At ingest, for every PDF we ask the LLM to extract a
+structured **policy digest** — a compact JSON of `rules`, `timelines`,
+`key_facts`, and `definitions`. Cached to `backend/policy_digest.json`
+(gitignored). The whole digest (formatted as markdown) is injected into the
+agent's system prompt so common policy numbers are *already there*, no
+retrieve needed.
+
+```mermaid
+flowchart LR
+    subgraph Ingest["Ingest (once per PDF change)"]
+        PDF1[Board Minutes PDF] --> LLM1[LLM extract]
+        PDF2[Salary Structure PDF] --> LLM1
+        PDF3[OnCall Runbook PDF] --> LLM1
+        PDFN[... 8 more PDFs] --> LLM1
+        LLM1 --> JSON[policy_digest.json<br/>rules + timelines + key_facts + definitions]
+    end
+
+    subgraph Query["Query-time (every question)"]
+        JSON --> SP[Agent system prompt<br/>pre-loaded]
+        Q[User question] --> A[Agent]
+        SP --> A
+        A --> TOOLS[Tools — run_sql, retrieve, calculator, ...]
+        TOOLS --> ANS[Answer<br/>cites digest + SQL + PDFs]
+    end
+```
+
+**What the digest captures** (actual output from our 11 PDFs):
+- `Retention bonus: 30% (standard), 40% (counter-offer) [Salary_Structure §5]`
+- `On-call stipend: ₹5,000/week primary, ₹2,500/week secondary [OnCall_Runbook §1]`
+- `DRHP filing with SEBI: September 2026 [Board_Minutes_Q4]`
+- `Proposed BSE/NSE listing: Q3 FY2027-28 [Board_Minutes_Q4]`
+- `Q4 FY2025-26 revenue: ₹847.3 crores [Q4_Financial_Report]`
+- `EBITDA margin: 23.0% [Board_Minutes_Q4]`
+- `Free cash flow: ₹156.8 crores [Q4_Financial_Report]`
+- `ESOP FMV: ₹842/share [Salary_Structure]`
+- `CEO-to-median pay ratio: 18.4:1 [Salary_Structure]`
+- `Cybersecurity budget uplift post INC-2025-0847: ₹8.5 crores [Board_Minutes_Q4]`
+- ...~80 similar entries across all 11 PDFs
+
+Cost: ~11 LLM calls at ingest (~₹10 one-time). Zero marginal cost per
+query — the digest rides in the system prompt with prompt caching.
+
+**Measured impact on the IPO-breach stress question:**
+
+| Check | Pre-digest | Post-digest |
+|---|---|---|
+| Vendor spend reported correctly | ₹15,000 crores ❌ (unit chaos) | ₹150 lakhs ≈ correct |
+| Cited DRHP timeline | ✗ | still ✗ (agent under-uses digest on this question) |
+| Applied 30% retention | ✗ (didn't even run reporter SQL) | ✗ (same) |
+| Referenced ₹50 Cr cyber insurance | ✗ | ✗ |
+| Quoted EBITDA / FCF / Q4 revenue | ✗ | ✗ |
+
+Honest read: the digest infrastructure is sound, visible unit improvements
+happened, but on questions referencing ~7 distinct PDF facts the agent
+still fires SQL in parallel instead of planning sequentially. The final
+remaining gap isn't retrieval or data — it's **enforced sequential
+decomposition**. That's Layer 9 on the roadmap: require the agent to
+produce an explicit numbered sub-question plan before any tool call.
+
+---
+
 ## 13. Remaining gaps + what's next
 
 With the agent loop live, the remaining gaps are smaller and mostly

@@ -16,6 +16,7 @@ from backend.services.chunker import chunk_document
 from backend.services.db import chat_store
 from backend.services.graph_builder import GraphBuilder
 from backend.services.loader import IngestionError, list_pdfs, load_pdf
+from backend.services.policy_digest import build_policy_digest
 from backend.services.schema_docs import build_schema_docs
 from backend.services.schema_glossary import build_glossary, load_glossary
 from backend.services.structured_ingest import (
@@ -132,6 +133,8 @@ async def ingest(req: IngestRequest, request: Request) -> IngestResponse:
         print("[ingest] building business glossary (LLM per column, cached)...")
         glossary = await build_glossary(registry)
         schema_chunks = build_schema_docs(registry, glossary)
+        print("[ingest] building policy digest (LLM per PDF, cached)...")
+        await build_policy_digest()
         if schema_chunks:
             print(
                 f"[ingest] schema docs: {len(schema_chunks)} "
