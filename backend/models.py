@@ -88,6 +88,21 @@ class RouteDecision(BaseModel):
     heuristic_reason: str | None = None
 
 
+class AgentStep(BaseModel):
+    step: int
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    result_preview: str = ""
+
+
+class AgentTrace(BaseModel):
+    used: bool = False
+    iterations: int = 0
+    exceeded: bool = False
+    total_elapsed_ms: int | None = None
+    steps: list[AgentStep] = Field(default_factory=list)
+
+
 class QueryResponse(BaseModel):
     answer: str
     sources: list[ChunkResult]
@@ -98,6 +113,7 @@ class QueryResponse(BaseModel):
     session_id: UUID | None = None
     route: RouteDecision | None = None
     sql_result: SqlResult | None = None
+    agent_trace: AgentTrace | None = None
 
 
 # ---------- /api/sessions ----------

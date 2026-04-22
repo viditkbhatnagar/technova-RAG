@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     database_url: str = ""
     sql_row_limit: int = 100
     sql_statement_timeout_ms: int = 5000
+    sql_agent_enabled: bool = True
+    sql_agent_max_iters: int = 8
 
     @property
     def docs_dir(self) -> Path:

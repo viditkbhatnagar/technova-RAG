@@ -15,6 +15,8 @@ from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import settings as cfg
 from backend.models import (
+    AgentStep,
+    AgentTrace,
     ChunkResult,
     QueryRequest,
     QueryResponse,
@@ -26,6 +28,7 @@ from backend.services.db import chat_store
 from backend.services.generator import assemble_prompt, generate_answer
 from backend.services.query_router import required_restricted_tables, route_query
 from backend.services.security import self_correcting_retrieve
+from backend.services.sql_agent import SQLAgent
 from backend.services.sql_engine import SQLEngine, format_rows_for_llm
 
 router = APIRouter()
@@ -201,6 +204,7 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
 
     # ---- 2. Run SQL path (if applicable) ----
     raw_sql: dict | None = None
+    agent_outcome: dict | None = None
     restricted_preflight: list[str] = []
     if requested_route in ("sql", "hybrid") and sql_engine is not None:
         restricted_preflight = required_restricted_tables(req.query, effective_role)
@@ -213,6 +217,34 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
                 ),
                 "attempts": [],
             }
+        elif cfg.sql_agent_enabled:
+            agent = SQLAgent(
+                sql_engine=sql_engine,
+                retriever=retriever,
+                store=store,
+                embedder=request.app.state.embedder,
+            )
+            agent_outcome = await agent.answer(req.query, effective_role)
+            # Surface the agent's last run_sql result in sql_result so the UI
+            # renders a table; the final narrative comes from agent_outcome.answer.
+            sqls = agent_outcome.get("sql_results") or []
+            if sqls:
+                last = sqls[-1]
+                raw_sql = {
+                    "ok": True,
+                    "sql": last.get("sql"),
+                    "columns": last.get("columns") or [],
+                    "rows": last.get("rows") or [],
+                    "row_count": last.get("row_count") or 0,
+                    "truncated": False,
+                    "attempts": [],
+                }
+            else:
+                raw_sql = {
+                    "ok": False,
+                    "error": agent_outcome.get("error") or "Agent completed without SQL",
+                    "attempts": [],
+                }
         else:
             raw_sql = await sql_engine.answer(req.query, effective_role)
 
@@ -317,7 +349,12 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
     # ---- 5. Synthesize answer ----
     source_results = [_to_chunk_result(c) for c in chunks]
 
-    if route_decision.route == "sql" and raw_sql and raw_sql.get("ok"):
+    if agent_outcome and agent_outcome.get("ok") and agent_outcome.get("answer"):
+        # Agent has already composed a final grounded answer using tools
+        # (SQL + retrieve + calculator). Skip the single-shot synthesizer.
+        answer = agent_outcome["answer"]
+        prompt = f"[Agent] {len(agent_outcome.get('trace', []))} tool calls"
+    elif route_decision.route == "sql" and raw_sql and raw_sql.get("ok"):
         answer = await _sql_only_answer(req.query, raw_sql)
         prompt = f"[SQL] {raw_sql.get('sql', '')}"
     elif route_decision.route == "hybrid" and raw_sql and raw_sql.get("ok"):
@@ -327,6 +364,26 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
         answer, prompt = await generate_answer(req.query, chunks)
         if not prompt:
             prompt = assemble_prompt(req.query, chunks)
+
+    agent_trace_out: AgentTrace | None = None
+    if agent_outcome is not None:
+        agent_trace_out = AgentTrace(
+            used=True,
+            iterations=int(agent_outcome.get("iterations") or 0),
+            exceeded=bool(agent_outcome.get("exceeded", False)),
+            total_elapsed_ms=agent_outcome.get("total_elapsed_ms"),
+            steps=[
+                AgentStep(
+                    step=int(s.get("step", 0)),
+                    tool=str(s.get("tool", "")),
+                    args=dict(s.get("args") or {}),
+                    result_preview=str(s.get("result_preview", ""))[:400],
+                )
+                for s in agent_outcome.get("trace", [])
+            ],
+        )
+        stats["agent_used"] = True
+        stats["agent_iterations"] = agent_trace_out.iterations
 
     chat_store.schedule_save(
         session_id=session_id,
@@ -363,4 +420,5 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
         session_id=session_id,
         route=route_decision,
         sql_result=_to_sql_result(raw_sql) if raw_sql else None,
+        agent_trace=agent_trace_out,
     )
