@@ -224,7 +224,12 @@ async def query(req: QueryRequest, request: Request) -> QueryResponse:
                 store=store,
                 embedder=request.app.state.embedder,
             )
-            agent_outcome = await agent.answer(req.query, effective_role)
+            if cfg.sql_agent_self_consistency > 1:
+                agent_outcome = await agent.answer_with_voting(
+                    req.query, effective_role, samples=cfg.sql_agent_self_consistency
+                )
+            else:
+                agent_outcome = await agent.answer(req.query, effective_role)
             # Surface the agent's last run_sql result in sql_result so the UI
             # renders a table; the final narrative comes from agent_outcome.answer.
             sqls = agent_outcome.get("sql_results") or []

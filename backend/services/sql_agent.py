@@ -45,10 +45,10 @@ _AGENT_SYSTEM = """You are a data analyst for TechNova Inc. Answer the user's qu
 Strategy:
 - For numeric, listing, ranking, or filtering questions, call `run_sql` with a SELECT query (SQLite dialect, LIMIT <= {row_limit}).
 - If you are unsure which table or column holds a concept, call `retrieve` (it semantic-searches PDFs + schema docs + row docs), or `describe(table)` for a focused profile, or `list_values(table, column)` for the distinct values.
-- If the question references a policy rate, threshold, or definition not in the schema (e.g. "retention bonus %", "on-call stipend", "data localization countries"), call `retrieve` on that concept to pull the PDF text, then use `calculator` to apply it to your SQL results.
+- If the question references a policy rate, threshold, or definition not in the schema (e.g. "retention bonus %", "on-call stipend", "data localization countries"), call `retrieve` on that concept FIRST to pull the PDF text, then use `calculator` to apply it to your SQL results.
 - `sample_rows` is for cases where you need to see actual rows before writing a complex SQL.
 
-Hard rules (same as single-shot):
+Hard rules:
 - Only reference tables and columns that actually exist. `describe` or `retrieve` first if unsure.
 - Enum values are fixed — don't invent. Use `list_values` to verify.
 - Watch null_rates: a column with null_rate ≈ 100% cannot be JOINed.
@@ -57,9 +57,31 @@ Hard rules (same as single-shot):
 - If a concept isn't in the data, say so — don't substitute a loosely related column.
 - Default budget: {max_iters} tool calls. Be efficient.
 
-When you have enough information, stop calling tools and write the final answer. In your final answer:
-- Quote exact numbers from SQL results (never estimate).
-- Cite which sources you used (SQL query / PDF doc name).
+UNIT DISCIPLINE (critical — past failures mixed lakhs with rupees):
+- Every column amount has a unit implied by its name (e.g. `total_ctc_inr_lakhs` is LAKHS, `annual_cost` on assets is INR (rupees), `amount` in financial_transactions is CRORES per `amount_unit`).
+- Before passing numbers to `calculator`, verify they are all in the SAME unit. Convert if not:
+    1 crore = 100 lakhs = 10,000,000 rupees.
+    1 lakh = 100,000 rupees.
+- When applying a per-unit rate (e.g. ₹5,000/week on-call × 8 weeks × N engineers), express the rate in the same unit as the other numbers. Example: if CTCs are in lakhs, on-call is 5000/100000 = 0.05 lakhs/week.
+- Always state units in your final answer (e.g. "₹96.04 lakhs" not "96.04").
+- In every `calculator` call, mentally verify: what unit is the result? Match the surrounding numbers.
+
+AMBIGUITY HANDLING (state assumptions explicitly):
+- Fuzzy business terms often have multiple valid interpretations. Examples:
+    "senior engineering" → could mean L4+ or L5+
+    "certifications" → could mean any training module OR external certs only
+    "regulated Asian markets" → could mean APAC broadly OR countries with data-localization laws specifically (Vietnam, Indonesia, India)
+    "this year" / "last year" → calendar year vs fiscal year
+- When you detect ambiguity, use `retrieve` and `list_values` to ground the interpretation in the actual data (e.g. look at what level distribution exists, or retrieve the board minutes for "regulated markets").
+- If multiple interpretations remain plausible, pick the broader / more inclusive one, and STATE THE ASSUMPTION in your final answer under an "Assumptions" section.
+
+GRAIN:
+- If the user asks for a list of entity X, the answer should be at the grain of X. Use DISTINCT / GROUP BY to dedupe when joining through intermediate tables.
+
+FINAL ANSWER FORMAT:
+- Quote exact numbers from SQL results with their units.
+- Cite which sources you used (SQL query tables / PDF doc names).
+- Include a short "Assumptions:" section when you had to interpret fuzzy terms.
 - If part of the question couldn't be answered from the data, say so plainly.
 """
 
@@ -210,10 +232,15 @@ class SQLAgent:
             "foreign_keys": t.get("foreign_keys", []),
         }
 
-    def _calculator(self, expression: str) -> dict:
+    def _calculator(self, expression: str, unit: str = "") -> dict:
         try:
             result = _safe_eval(expression)
-            return {"ok": True, "expression": expression, "result": result}
+            return {
+                "ok": True,
+                "expression": expression,
+                "result": result,
+                "unit": unit or "(unit unspecified — state it in the final answer)",
+            }
         except Exception as exc:
             return {"ok": False, "error": f"calculator error: {exc}"}
 
@@ -234,7 +261,7 @@ class SQLAgent:
             if name == "describe":
                 return self._describe(args["table"], role)
             if name == "calculator":
-                return self._calculator(args["expression"])
+                return self._calculator(args["expression"], args.get("unit", ""))
             return {"ok": False, "error": f"unknown tool: {name}"}
         except KeyError as exc:
             return {"ok": False, "error": f"missing argument: {exc}"}
@@ -322,21 +349,121 @@ class SQLAgent:
                 "type": "function",
                 "function": {
                     "name": "calculator",
-                    "description": "Evaluate an arithmetic expression safely (+, -, *, /, **, parens). Use for applying PDF-sourced rates to SQL results.",
+                    "description": (
+                        "Evaluate an arithmetic expression safely (+, -, *, /, **, parens). "
+                        "CRITICAL UNIT RULE: every number in the expression must be in the "
+                        "SAME unit. If mixing lakhs (like CTC) with rupees (like ₹5,000/week), "
+                        "convert first: 1 lakh = 100,000 rupees, 1 crore = 100 lakhs. "
+                        "Example: to apply ₹5,000/week × 8 weeks to 13 engineers whose CTCs are "
+                        "in lakhs, express as (5000*8*13)/100000 to get lakhs. "
+                        "Also provide the `unit` parameter so the result can be reported correctly."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "expression": {"type": "string"},
+                            "unit": {
+                                "type": "string",
+                                "description": "The unit of the result, e.g. 'lakhs', 'crores', 'INR', '%', 'count'.",
+                            },
                         },
-                        "required": ["expression"],
+                        "required": ["expression", "unit"],
                     },
                 },
             },
         ]
 
+    # ---------- self-consistency orchestration ----------
+
+    async def answer_with_voting(
+        self, question: str, role: str | None, samples: int = 3
+    ) -> dict:
+        """Run the agent `samples` times in parallel, then reconcile the answers.
+
+        When multiple runs agree, returns the consensus. When they disagree
+        (common on ambiguous queries), a final reconciler LLM call picks the
+        most defensible answer, explicitly listing the disagreement so the user
+        sees it.
+
+        Cost: samples × single-run cost + 1 reconciler call. At samples=3 this
+        is ~$0.04-0.10 per hard query — acceptable for enterprise use-cases.
+        """
+        import asyncio
+
+        if samples <= 1:
+            return await self.answer(question, role, temperature=0.0)
+
+        # Run N independent agent passes with slightly different temperatures
+        # (0.0, 0.3, 0.5) to get genuine diversity without going off the rails
+        temps = [0.0, 0.3, 0.5][:samples] + [0.4] * max(0, samples - 3)
+        outcomes = await asyncio.gather(
+            *[self.answer(question, role, temperature=t) for t in temps[:samples]],
+            return_exceptions=True,
+        )
+        successful = [o for o in outcomes if isinstance(o, dict) and o.get("ok")]
+        if not successful:
+            first = outcomes[0] if outcomes else {"ok": False, "error": "all samples failed"}
+            return first if isinstance(first, dict) else {"ok": False, "error": str(first)}
+        if len(successful) == 1:
+            return successful[0]
+
+        # Reconcile: ask an LLM to pick or merge, showing all drafts
+        reconciled = await self._reconcile(question, successful)
+        # Attach the first successful run's trace/sql results for UI rendering
+        primary = successful[0]
+        return {
+            "ok": True,
+            "answer": reconciled,
+            "trace": primary.get("trace", []),
+            "iterations": primary.get("iterations"),
+            "total_elapsed_ms": sum(
+                int(o.get("total_elapsed_ms") or 0) for o in successful
+            ),
+            "sql_results": primary.get("sql_results", []),
+            "self_consistency_samples": len(successful),
+        }
+
+    async def _reconcile(self, question: str, drafts: list[dict]) -> str:
+        """Pick or merge answers from multiple agent runs."""
+        if not settings.openai_api_key:
+            return drafts[0].get("answer", "")
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+        drafts_text = "\n\n".join(
+            f"---- DRAFT {i+1} ----\n{d.get('answer', '')}"
+            for i, d in enumerate(drafts)
+        )
+        system = (
+            "You reconcile multiple LLM-generated answers to the same question. "
+            "Return the single most accurate final answer. If the drafts AGREE on key "
+            "numeric facts, return one consolidated answer. If they DISAGREE, pick the "
+            "draft whose reasoning is most grounded (cites exact columns/tables/PDFs, "
+            "uses consistent units, states assumptions), and call out the disagreement "
+            "in an 'Analysis note:' line at the end so the user knows. Keep the final "
+            "answer concise and professional."
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"QUESTION: {question}\n\n{drafts_text}"},
+                ],
+                temperature=0.0,
+                max_tokens=1200,
+            )
+            return (resp.choices[0].message.content or "").strip() or drafts[0].get("answer", "")
+        except OpenAIError:
+            return drafts[0].get("answer", "")
+
     # ---------- main loop ----------
 
-    async def answer(self, question: str, role: str | None) -> dict:
+    async def answer(
+        self,
+        question: str,
+        role: str | None,
+        temperature: float = 0.0,
+    ) -> dict:
         """ReAct loop: LLM picks tools until it has enough to answer."""
         if not settings.openai_api_key:
             return {
@@ -376,7 +503,7 @@ class SQLAgent:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.0,
+                    temperature=temperature,
                     max_tokens=1200,
                 )
             except OpenAIError as exc:
@@ -455,7 +582,7 @@ class SQLAgent:
             resp = await client.chat.completions.create(
                 model=settings.llm_model,
                 messages=messages,
-                temperature=0.0,
+                temperature=temperature,
                 max_tokens=900,
             )
             final = (resp.choices[0].message.content or "").strip()

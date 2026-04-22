@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     sql_statement_timeout_ms: int = 5000
     sql_agent_enabled: bool = True
     sql_agent_max_iters: int = 8
+    sql_agent_self_consistency: int = 1  # >1 runs N agents in parallel + reconciles
 
     @property
     def docs_dir(self) -> Path:

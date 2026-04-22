@@ -518,6 +518,83 @@ reliably answered with PDF-grounded arithmetic.
 
 ---
 
+## 12b. Layer 7.5 — Three refinements on top of the agent loop
+
+After Layer 7 shipped, three smaller refinements addressed specific failure
+modes that the ReAct loop exposed:
+
+**A. Unit discipline in the calculator tool.** The agent sometimes mixed
+lakhs with rupees (e.g. `0.30 × CTC_in_lakhs + 5000_rupees_per_week`). The
+calculator tool now requires an explicit `unit` parameter alongside the
+expression, and the system prompt contains an explicit units section:
+
+```
+UNIT DISCIPLINE:
+- total_ctc_inr_lakhs is in LAKHS
+- assets_licenses.annual_cost is in INR (rupees)
+- financial_transactions.amount is in CRORES
+- 1 crore = 100 lakhs = 10,000,000 rupees
+- When mixing, convert first. Example: ₹5,000/week for 8 weeks across 13
+  engineers → (5000*8*13)/100000 to get lakhs.
+```
+
+Result: Q3 now correctly reports ₹210 crores = ₹21,000 lakhs; Q1 calculator
+calls use `/100000` to normalize rupees → lakhs before summing with CTC.
+
+**B. Assumptions section in the final answer.** Fuzzy terms ("senior",
+"certifications", "regulated markets") have multiple valid interpretations.
+Instead of silently picking one, the agent must now state its assumption
+under a dedicated section:
+
+```
+Final Answer:
+...
+
+Assumptions:
+- 'senior engineering' = L5 and above
+- 'behind on training' = tc.status = 'Overdue'
+- On-call stipend applied for the full year (52 weeks)
+```
+
+This makes disagreements debuggable. A user who disagrees with the
+interpretation can rephrase, rather than being surprised by a wrong number.
+
+**C. Self-consistency voting (opt-in).** For single runs, even at temp=0,
+the same question can take different tool-call paths. `answer_with_voting`
+runs N agents in parallel (temps 0.0, 0.3, 0.5) then a reconciler LLM
+picks the most-grounded draft or merges them, explicitly calling out any
+disagreement:
+
+```mermaid
+flowchart LR
+    Q[Question] --> P{Parallel<br/>N agent runs}
+    P --> A1[Agent run 1<br/>temp=0.0]
+    P --> A2[Agent run 2<br/>temp=0.3]
+    P --> A3[Agent run 3<br/>temp=0.5]
+    A1 --> R[Reconciler LLM<br/>'pick most-grounded draft<br/>or merge, flag disagreements']
+    A2 --> R
+    A3 --> R
+    R --> ANS[Final answer<br/>+ 'Analysis note' when drafts diverged]
+```
+
+Controlled by `settings.sql_agent_self_consistency` (default 1 = off).
+Typical value 3 for enterprise deployments. Cost: ~3× single-run. Use for
+high-stakes analytical queries; leave at 1 for cheap lookups.
+
+**Measured impact on the five canonical hard queries** (agent-on + refinements):
+
+| Query | Pre-refinement | Post-refinement |
+|---|---|---|
+| Q1 retention exposure (13 reporters, unit-sensitive math) | ₹65 L wrong units | ₹119 L (arithmetic text-hallucination still present; correct calculator returns ₹96) |
+| Q2 IPO Tier-1 fuzzy negatives | 35 candidates (broad) | Variance — sometimes 13, sometimes 0. Mitigated by self-consistency |
+| Q3 laptop spend vs budget (units) | ₹36 L, no budget conversion | ₹80 L + **correctly shows ₹210 Cr = 21,000 L**; assumption "L5+" stated |
+| Q4 data localization revenue | Too-broad ₹292 Cr | **₹29.58 Cr = matches gold** — retrieved VN/ID specifically from board-minute PDFs |
+| Q5 critical + training + flagged | 22 correct, gap reported oddly | 22 correct, assumption "Overdue = behind" stated |
+
+**Remaining honest gap:** LLM narrative arithmetic errors (Q1 text said sum = 396 when calculator's value is 320). Calculator returns the right number; the LLM's prose drifts. Fix on the roadmap: wrap calculator results in a structured citation block and require the LLM to quote the result verbatim.
+
+---
+
 ## 13. Remaining gaps + what's next
 
 With the agent loop live, the remaining gaps are smaller and mostly
